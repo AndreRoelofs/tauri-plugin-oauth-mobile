@@ -1,6 +1,10 @@
 ## Default Permission
 
-Default permissions for the glazier plugin
+Allows the OAuth session plugin to open ASWebAuthenticationSession.
+
+#### This default permission set includes the following:
+
+- `allow-authenticate`
 
 ## Permission Table
 
@@ -10,4 +14,30 @@ Default permissions for the glazier plugin
 <th>Description</th>
 </tr>
 
+
+<tr>
+<td>
+
+`oauth-session:allow-authenticate`
+
+</td>
+<td>
+
+Enables the authenticate command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`oauth-session:deny-authenticate`
+
+</td>
+<td>
+
+Denies the authenticate command without any pre-configured scope.
+
+</td>
+</tr>
 </table>

@@ -1,26 +1,22 @@
 [package]
-name = "tauri-plugin-glazier"
-version = "0.0.1"
-description = "Window tiling for Tauri Apps with unified cross-platform functionality"
-authors = ["Andre Roelofs"]
-license = "Apache-2.0"
-edition = "2021"
-rust-version = "1.77.2"
-links = "tauri-plugin-glazier"
+name = "tauri-plugin-oauth-session"
+version = "0.1.0"
+description = "Tauri plugin that drives OAuth flows through ASWebAuthenticationSession on iOS and Chrome Custom Tabs on Android."
+edition.workspace = true
+license = "LicenseRef-Eurora-SUL-AND-Apache-2.0"
+publish = false
+links = "tauri-plugin-oauth-session"
 
-[package.metadata.docs.rs]
-rustc-args = ["--cfg", "docsrs"]
-rustdoc-args = ["--cfg", "docsrs"]
-
-[build-dependencies]
-tauri-plugin = { version = "2", features = ["build"] }
+[lib]
+name = "tauri_plugin_oauth_session"
+path = "src/lib.rs"
 
 [dependencies]
-tauri = { version = "2", default-features = false }
-serde = { version = "1", features = ["derive"] }
-focus-tracker = "1"
-serde_json = "1"
-thiserror = "2"
-log = "0.4"
-base64 = "0.22"
-image = "0.25"
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tauri = { version = "2.10.2" }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[build-dependencies]
+tauri-plugin = { version = "2.5", features = ["build"] }

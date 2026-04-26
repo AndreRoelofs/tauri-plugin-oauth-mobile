@@ -295,10 +295,22 @@
       "type": "string",
       "oneOf": [
         {
-          "description": "Default permissions for the glazier plugin",
+          "description": "Enables the authenticate command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-authenticate",
+          "markdownDescription": "Enables the authenticate command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the authenticate command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-authenticate",
+          "markdownDescription": "Denies the authenticate command without any pre-configured scope."
+        },
+        {
+          "description": "Allows the OAuth session plugin to open ASWebAuthenticationSession.\n#### This default permission set includes:\n\n- `allow-authenticate`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the glazier plugin"
+          "markdownDescription": "Allows the OAuth session plugin to open ASWebAuthenticationSession.\n#### This default permission set includes:\n\n- `allow-authenticate`"
         }
       ]
     }

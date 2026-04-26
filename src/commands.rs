@@ -1,19 +1,11 @@
-use crate::platform;
-use crate::GlazierState;
-use tauri::State;
+use tauri::{AppHandle, Runtime, command};
 
-#[tauri::command]
-pub async fn position_window_next_to_previous(
-    state: State<'_, GlazierState>,
-) -> Result<(), String> {
-    platform::commands::position_window_next_to_previous(state).await
-}
+use crate::{AuthenticateOptions, AuthenticateResponse, OAuthSessionExt, Result};
 
-/// Returns an array of icons from previously focused windows.
-#[tauri::command]
-pub async fn get_previous_icons(
-    state: State<'_, GlazierState>,
-    num: usize,
-) -> Result<Vec<String>, String> {
-    platform::commands::get_previous_icons(state, num).await
+#[command]
+pub(crate) async fn authenticate<R: Runtime>(
+    app: AppHandle<R>,
+    options: AuthenticateOptions,
+) -> Result<AuthenticateResponse> {
+    app.oauth_session().authenticate(options).await
 }

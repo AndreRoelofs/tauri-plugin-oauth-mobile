@@ -1,111 +1,104 @@
-use base64::Engine;
-use focus_tracker::{FocusTracker, FocusTrackerConfig, IconConfig};
-use image::ImageEncoder;
-use std::io::Cursor;
-use std::sync::{Arc, Mutex};
+//! Drive OAuth flows through ASWebAuthenticationSession on iOS and Chrome
+//! Custom Tabs on Android.
+//!
+//! On both platforms the plugin opens an in-app browser session, intercepts
+//! the redirect to the configured callback scheme, and resolves with the full
+//! callback URL — replacing the older "open external browser, poll backend"
+//! pattern.
+//!
+//! Platform asymmetry: `prefersEphemeralSession` is honored on iOS but has no
+//! Android equivalent — Custom Tabs always shares cookies with the user's
+//! default browser.
+
+#![cfg_attr(not(mobile), allow(dead_code))]
+
+use serde::de::DeserializeOwned;
 use tauri::{
-    plugin::{Builder, TauriPlugin},
-    Emitter, Error, Listener, Manager, Runtime, WebviewWindow,
+    AppHandle, Manager, Runtime,
+    plugin::{Builder, PluginApi, TauriPlugin},
 };
 
-#[cfg(target_os = "macos")]
-#[path = "macos/mod.rs"]
-mod platform;
-
-#[cfg(target_os = "linux")]
-#[path = "linux/mod.rs"]
-mod platform;
-
-#[cfg(target_os = "windows")]
-#[path = "windows/mod.rs"]
-mod platform;
-
 mod commands;
+mod error;
+mod models;
 
-const MAX_FOCUS_HISTORY: usize = 5;
+pub use error::{Error, Result};
+pub use models::{AuthenticateOptions, AuthenticateResponse};
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-pub struct FocusedWindow {
-    pub process_id: u32,
-    pub process_name: String,
-    pub window_title: Option<String>,
-    /// Base64 encoded PNG icon data
-    pub icon: Option<String>,
+#[cfg(target_os = "ios")]
+tauri::ios_plugin_binding!(init_plugin_oauth_session);
+
+#[cfg(target_os = "android")]
+const PLUGIN_IDENTIFIER: &str = "app.tauri.oauth_session";
+
+/// Access to the OAuth session APIs.
+pub struct OAuthSession<R: Runtime>(OAuthSessionImpl<R>);
+
+#[cfg(mobile)]
+type OAuthSessionImpl<R> = tauri::plugin::PluginHandle<R>;
+
+// `PhantomData<fn() -> R>` is unconditionally `Send + Sync`, which is what
+// Tauri's `Manager::manage` requires.
+#[cfg(not(mobile))]
+type OAuthSessionImpl<R> = std::marker::PhantomData<fn() -> R>;
+
+impl<R: Runtime> OAuthSession<R> {
+    /// Open the platform-native authentication browser and resolve with the
+    /// redirect URL once the system intercepts the callback scheme.
+    pub async fn authenticate(
+        &self,
+        options: AuthenticateOptions,
+    ) -> Result<AuthenticateResponse> {
+        #[cfg(mobile)]
+        {
+            let response: AuthenticateResponse =
+                self.0.run_mobile_plugin("authenticate", options)?;
+            Ok(response)
+        }
+        #[cfg(not(mobile))]
+        {
+            let _ = options;
+            Err(Error::UnsupportedPlatform)
+        }
+    }
 }
 
-pub struct GlazierState {
-    pub items: Arc<Mutex<Vec<FocusedWindow>>>,
+pub trait OAuthSessionExt<R: Runtime> {
+    fn oauth_session(&self) -> &OAuthSession<R>;
 }
 
-pub trait WebviewWindowExt {
-    fn create_overlay_titlebar(&self) -> Result<&Self, Error>;
+impl<R: Runtime, T: Manager<R>> OAuthSessionExt<R> for T {
+    fn oauth_session(&self) -> &OAuthSession<R> {
+        self.state::<OAuthSession<R>>().inner()
+    }
 }
 
-fn encode_icon_to_base64(icon: &image::RgbaImage) -> Option<String> {
-    let mut buf = Cursor::new(Vec::new());
-    let encoder = image::codecs::png::PngEncoder::new(&mut buf);
-    encoder
-        .write_image(
-            icon.as_raw(),
-            icon.width(),
-            icon.height(),
-            image::ExtendedColorType::Rgba8,
-        )
-        .ok()?;
-    Some(base64::engine::general_purpose::STANDARD.encode(buf.into_inner()))
+fn init_oauth_session<R: Runtime, C: DeserializeOwned>(
+    _app: &AppHandle<R>,
+    _api: PluginApi<R, C>,
+) -> Result<OAuthSession<R>> {
+    #[cfg(target_os = "ios")]
+    {
+        let handle = _api.register_ios_plugin(init_plugin_oauth_session)?;
+        Ok(OAuthSession(handle))
+    }
+    #[cfg(target_os = "android")]
+    {
+        let handle = _api.register_android_plugin(PLUGIN_IDENTIFIER, "OAuthSessionPlugin")?;
+        Ok(OAuthSession(handle))
+    }
+    #[cfg(not(mobile))]
+    {
+        Ok(OAuthSession(std::marker::PhantomData))
+    }
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
-    Builder::new("glazier")
-        .setup(|app, _api| {
-            let items = Arc::new(Mutex::new(Vec::new()));
-
-            app.manage(GlazierState {
-                items: Arc::clone(&items),
-            });
-
-            tauri::async_runtime::spawn(async move {
-                let config = FocusTrackerConfig::builder()
-                    .poll_interval(std::time::Duration::from_millis(100))
-                    .unwrap()
-                    .icon(IconConfig::builder().size(64).unwrap().build())
-                    .build();
-
-                let tracker = FocusTracker::builder().config(config).build();
-
-                let result = tracker
-                    .track_focus()
-                    .on_focus(move |window: focus_tracker::FocusedWindow| {
-                        let icon_base64 = window
-                            .icon
-                            .as_ref()
-                            .map(|arc| encode_icon_to_base64(arc))
-                            .flatten();
-
-                        let focused = FocusedWindow {
-                            process_id: window.process_id,
-                            process_name: window.process_name.clone(),
-                            window_title: window.window_title.clone(),
-                            icon: icon_base64,
-                        };
-
-                        let items = Arc::clone(&items);
-                        async move {
-                            let mut list = items.lock().unwrap();
-                            list.insert(0, focused);
-                            list.truncate(MAX_FOCUS_HISTORY);
-                            Ok(())
-                        }
-                    })
-                    .call()
-                    .await;
-
-                if let Err(e) = result {
-                    log::error!("Focus tracker error: {}", e);
-                }
-            });
-
-            log::info!("glazier plugin initialized");
+    Builder::new("oauth-session")
+        .invoke_handler(tauri::generate_handler![commands::authenticate])
+        .setup(|app, api| {
+            let plugin = init_oauth_session(app, api)?;
+            app.manage(plugin);
             Ok(())
         })
         .build()
