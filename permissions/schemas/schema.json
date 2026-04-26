@@ -295,22 +295,94 @@
       "type": "string",
       "oneOf": [
         {
-          "description": "Enables the authenticate command without any pre-configured scope.",
+          "description": "Enables the authorize command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-authenticate",
-          "markdownDescription": "Enables the authenticate command without any pre-configured scope."
+          "const": "allow-authorize",
+          "markdownDescription": "Enables the authorize command without any pre-configured scope."
         },
         {
-          "description": "Denies the authenticate command without any pre-configured scope.",
+          "description": "Denies the authorize command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-authenticate",
-          "markdownDescription": "Denies the authenticate command without any pre-configured scope."
+          "const": "deny-authorize",
+          "markdownDescription": "Denies the authorize command without any pre-configured scope."
         },
         {
-          "description": "Run OAuth 2.0 / OIDC authorization on mobile via AppAuth.\n#### This default permission set includes:\n\n- `allow-authenticate`",
+          "description": "Enables the authorize_browser_only command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-authorize-browser-only",
+          "markdownDescription": "Enables the authorize_browser_only command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the authorize_browser_only command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-authorize-browser-only",
+          "markdownDescription": "Denies the authorize_browser_only command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the discover command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-discover",
+          "markdownDescription": "Enables the discover command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the discover command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-discover",
+          "markdownDescription": "Denies the discover command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the end_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-end-session",
+          "markdownDescription": "Enables the end_session command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the end_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-end-session",
+          "markdownDescription": "Denies the end_session command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the refresh command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-refresh",
+          "markdownDescription": "Enables the refresh command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the refresh command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-refresh",
+          "markdownDescription": "Denies the refresh command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the register command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-register",
+          "markdownDescription": "Enables the register command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the register command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-register",
+          "markdownDescription": "Denies the register command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the subscribe_events command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-subscribe-events",
+          "markdownDescription": "Enables the subscribe_events command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the subscribe_events command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-subscribe-events",
+          "markdownDescription": "Denies the subscribe_events command without any pre-configured scope."
+        },
+        {
+          "description": "Run OAuth 2.0 / OIDC authorization on mobile via AppAuth.\n#### This default permission set includes:\n\n- `allow-discover`\n- `allow-authorize`\n- `allow-authorize-browser-only`\n- `allow-refresh`\n- `allow-end-session`\n- `allow-subscribe-events`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Run OAuth 2.0 / OIDC authorization on mobile via AppAuth.\n#### This default permission set includes:\n\n- `allow-authenticate`"
+          "markdownDescription": "Run OAuth 2.0 / OIDC authorization on mobile via AppAuth.\n#### This default permission set includes:\n\n- `allow-discover`\n- `allow-authorize`\n- `allow-authorize-browser-only`\n- `allow-refresh`\n- `allow-end-session`\n- `allow-subscribe-events`"
         }
       ]
     }
