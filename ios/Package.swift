@@ -2,22 +2,22 @@
 import PackageDescription
 
 let package = Package(
-    name: "tauri-plugin-oauth-session",
+    name: "tauri-plugin-appauth",
     platforms: [
         .iOS(.v13)
     ],
     products: [
         .library(
-            name: "tauri-plugin-oauth-session",
+            name: "tauri-plugin-appauth",
             type: .static,
-            targets: ["tauri-plugin-oauth-session"])
+            targets: ["tauri-plugin-appauth"])
     ],
     dependencies: [
         .package(name: "Tauri", path: "../.tauri/tauri-api")
     ],
     targets: [
         .target(
-            name: "tauri-plugin-oauth-session",
+            name: "tauri-plugin-appauth",
             dependencies: [
                 .byName(name: "Tauri")
             ],

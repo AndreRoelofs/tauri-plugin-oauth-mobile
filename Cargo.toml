@@ -1,14 +1,17 @@
 [package]
-name = "tauri-plugin-oauth-session"
+name = "tauri-plugin-appauth"
 version = "0.1.0"
-description = "Tauri plugin that drives OAuth flows through ASWebAuthenticationSession on iOS and Chrome Custom Tabs on Android."
+description = "Tauri 2 mobile plugin that bridges OAuth 2.0 / OIDC flows to AppAuth-iOS and AppAuth-Android."
 edition = "2024"
 license = "Apache-2.0"
 publish = true
-links = "tauri-plugin-oauth-session"
+links = "tauri-plugin-appauth"
+repository = "https://github.com/eurora-labs/tauri-plugin-appauth"
+keywords = ["tauri", "plugin", "oauth", "oidc", "appauth"]
+categories = ["authentication"]
 
 [lib]
-name = "tauri_plugin_oauth_session"
+name = "tauri_plugin_appauth"
 path = "src/lib.rs"
 
 [dependencies]

@@ -1,6 +1,6 @@
 ## Default Permission
 
-Allows the OAuth session plugin to open ASWebAuthenticationSession.
+Run OAuth 2.0 / OIDC authorization on mobile via AppAuth.
 
 #### This default permission set includes the following:
 
@@ -18,7 +18,7 @@ Allows the OAuth session plugin to open ASWebAuthenticationSession.
 <tr>
 <td>
 
-`oauth-session:allow-authenticate`
+`appauth:allow-authenticate`
 
 </td>
 <td>
@@ -31,7 +31,7 @@ Enables the authenticate command without any pre-configured scope.
 <tr>
 <td>
 
-`oauth-session:deny-authenticate`
+`appauth:deny-authenticate`
 
 </td>
 <td>

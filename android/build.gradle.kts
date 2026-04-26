@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "app.tauri.oauth_session"
+    namespace = "app.tauri.appauth"
     compileSdk = 36
 
     defaultConfig {

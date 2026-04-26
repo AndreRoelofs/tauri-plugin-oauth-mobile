@@ -1,7 +1,7 @@
 {
 	"$schema": "https://raw.githubusercontent.com/nicknisi/tauri-settings-schema/main/src/schema.json",
-	"productName": "glazier-example",
-	"identifier": "com.glazier.example",
+	"productName": "appauth-example",
+	"identifier": "com.appauth.example",
 	"build": {
 		"beforeDevCommand": "bun run dev",
 		"devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
 		"withGlobalTauri": true,
 		"windows": [
 			{
-				"title": "Glazier Example",
+				"title": "AppAuth Example",
 				"width": 800,
 				"height": 600
 			}

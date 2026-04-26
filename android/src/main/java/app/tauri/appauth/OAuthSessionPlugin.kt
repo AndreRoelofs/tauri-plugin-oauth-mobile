@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package app.tauri.oauth_session
+package app.tauri.appauth
 
 import android.app.Activity
 import android.content.ActivityNotFoundException

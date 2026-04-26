@@ -29,7 +29,7 @@ pub use models::{AuthenticateOptions, AuthenticateResponse};
 tauri::ios_plugin_binding!(init_plugin_oauth_session);
 
 #[cfg(target_os = "android")]
-const PLUGIN_IDENTIFIER: &str = "app.tauri.oauth_session";
+const PLUGIN_IDENTIFIER: &str = "app.tauri.appauth";
 
 /// Access to the OAuth session APIs.
 pub struct OAuthSession<R: Runtime>(OAuthSessionImpl<R>);
@@ -94,7 +94,7 @@ fn init_oauth_session<R: Runtime, C: DeserializeOwned>(
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
-    Builder::new("oauth-session")
+    Builder::new("appauth")
         .invoke_handler(tauri::generate_handler![commands::authenticate])
         .setup(|app, api| {
             let plugin = init_oauth_session(app, api)?;

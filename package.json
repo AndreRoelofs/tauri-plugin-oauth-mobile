@@ -1,7 +1,16 @@
 {
-	"name": "tauri-plugin-glazier",
+	"name": "@eurora-labs/tauri-plugin-appauth",
 	"version": "0.1.0",
-	"private": true,
+	"description": "Tauri 2 mobile plugin that bridges OAuth 2.0 / OIDC flows to AppAuth-iOS and AppAuth-Android.",
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/eurora-labs/tauri-plugin-appauth.git"
+	},
+	"homepage": "https://github.com/eurora-labs/tauri-plugin-appauth#readme",
+	"bugs": {
+		"url": "https://github.com/eurora-labs/tauri-plugin-appauth/issues"
+	},
 	"type": "module",
 	"main": "dist-js/index.cjs",
 	"module": "dist-js/index.js",
