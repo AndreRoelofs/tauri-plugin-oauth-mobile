@@ -24,6 +24,12 @@ android {
         // sign in with Google instead, swap this for your reverse-DNS client
         // id (e.g. com.googleusercontent.apps.123456-abcdef).
         manifestPlaceholders["appAuthRedirectScheme"] = "io.identitymodel.native"
+        // The plugin ships BrowserSessionActivity for authorizeBrowserOnly
+        // flows. Manifest merging requires a value even when the host only
+        // uses the full authorize flow — keep this distinct from
+        // appAuthRedirectScheme so the OS doesn't route AppAuth redirects to
+        // BrowserSessionActivity.
+        manifestPlaceholders["tauriBrowserRedirectScheme"] = "com.appauth.example.browser"
         applicationId = "com.appauth.example"
         minSdk = 24
         targetSdk = 36
@@ -51,8 +57,12 @@ android {
             )
         }
     }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
     kotlinOptions {
-        jvmTarget = "1.8"
+        jvmTarget = "17"
     }
     buildFeatures {
         buildConfig = true
