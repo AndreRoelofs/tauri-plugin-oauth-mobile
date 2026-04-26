@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">appauth-example</string>
+    <string name="main_activity_title">appauth-example</string>
+</resources>

@@ -145,13 +145,35 @@ class AppAuthPlugin: Plugin {
                 invoke.reject("no presenting view controller available", code: ErrorMapping.codeBrowserNotAvailable)
                 return
             }
+            // Construct the external user agent ourselves rather than going
+            // through `OIDAuthState.authState(byPresenting:presenting:prefersEphemeralSession:callback:)`.
+            // That convenience method lives in the iOS-specific `OIDAuthState
+            // (IOS)` Objective-C category, and Tauri statically links AppAuth
+            // into `libapp.a`. The Mach-O linker only pulls `.o` files from a
+            // static archive when one of their non-category symbols is
+            // referenced, so the category file gets dropped and the selector
+            // goes missing at runtime (`NSInvalidArgumentException:
+            // unrecognized selector sent to class`). Going through the regular
+            // class methods on `OIDExternalUserAgentIOS` and
+            // `OIDAuthState.authState(byPresenting:externalUserAgent:callback:)`
+            // hits only non-category symbols, which the linker keeps without
+            // any `-ObjC` / `-force_load` workarounds in the host app.
+            guard let userAgent = OIDExternalUserAgentIOS(
+                presenting: presenter,
+                prefersEphemeralSession: args.prefersEphemeralSession
+            ) else {
+                invoke.reject(
+                    "could not initialize external user agent",
+                    code: ErrorMapping.codeBrowserNotAvailable
+                )
+                return
+            }
 
             self.emit(.browserOpened)
 
             self.currentSession = OIDAuthState.authState(
                 byPresenting: request,
-                presenting: presenter,
-                prefersEphemeralSession: args.prefersEphemeralSession
+                externalUserAgent: userAgent
             ) { [weak self] authState, error in
                 guard let self = self else { return }
                 self.currentSession = nil

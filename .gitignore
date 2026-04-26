@@ -4,6 +4,11 @@ release/
 generated-archives/
 generated-do-not-edit/
 **/gen/
+# Track the example app's mobile scaffold so a fresh clone can `bun run dev:ios`
+# / `dev:android` without re-running `tauri (ios|android) init`. Build
+# artifacts inside the scaffold are excluded by nested `.gitignore` files
+# Tauri ships in `gen/apple/` and `gen/android/`.
+!/examples/tauri-app/src-tauri/gen/
 
 # editors
 .idea
