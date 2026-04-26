@@ -35,5 +35,6 @@ android {
 dependencies {
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.browser:browser:1.8.0")
+    implementation("net.openid:appauth:0.11.1")
     implementation(project(":tauri-android"))
 }

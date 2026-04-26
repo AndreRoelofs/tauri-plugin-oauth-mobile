@@ -2,6 +2,15 @@
   "object": {
     "pins": [
       {
+        "package": "AppAuth",
+        "repositoryURL": "https://github.com/openid/AppAuth-iOS",
+        "state": {
+          "branch": null,
+          "revision": "2781038865a80e2c425a1da12cc1327bcd56501f",
+          "version": "1.7.6"
+        }
+      },
+      {
         "package": "SwiftRs",
         "repositoryURL": "https://github.com/Brendonovich/swift-rs",
         "state": {

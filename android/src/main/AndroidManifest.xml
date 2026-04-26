@@ -1,18 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application>
-        <activity
-            android:name="app.tauri.appauth.RedirectActivity"
-            android:exported="true"
-            android:launchMode="singleTask"
-            android:noHistory="true"
-            android:theme="@android:style/Theme.NoDisplay">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="${appAuthRedirectScheme}" />
-            </intent-filter>
-        </activity>
-    </application>
-</manifest>
+<!--
+    AppAuth-Android ships its own `net.openid.appauth.RedirectUriReceiverActivity`
+    in its AAR; manifest merging registers it in the host app automatically.
+    Consumers must declare the redirect scheme via a `manifestPlaceholders` entry
+    in `app/build.gradle.kts`, e.g. `appAuthRedirectScheme = "com.example.app"`.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

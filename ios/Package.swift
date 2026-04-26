@@ -13,13 +13,15 @@ let package = Package(
             targets: ["tauri-plugin-appauth"])
     ],
     dependencies: [
-        .package(name: "Tauri", path: "../.tauri/tauri-api")
+        .package(name: "Tauri", path: "../.tauri/tauri-api"),
+        .package(url: "https://github.com/openid/AppAuth-iOS", .exact("1.7.6"))
     ],
     targets: [
         .target(
             name: "tauri-plugin-appauth",
             dependencies: [
-                .byName(name: "Tauri")
+                .byName(name: "Tauri"),
+                .product(name: "AppAuth", package: "AppAuth-iOS")
             ],
             path: "Sources")
     ]
