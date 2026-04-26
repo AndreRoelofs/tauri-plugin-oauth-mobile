@@ -32,7 +32,7 @@ pub use models::{
 };
 
 #[cfg(target_os = "ios")]
-tauri::ios_plugin_binding!(init_plugin_oauth_session);
+tauri::ios_plugin_binding!(init_plugin_appauth);
 
 #[cfg(target_os = "android")]
 const PLUGIN_IDENTIFIER: &str = "app.tauri.appauth";
@@ -137,12 +137,12 @@ fn init_appauth<R: Runtime, C: DeserializeOwned>(
 ) -> Result<AppAuth<R>> {
     #[cfg(target_os = "ios")]
     {
-        let handle = _api.register_ios_plugin(init_plugin_oauth_session)?;
+        let handle = _api.register_ios_plugin(init_plugin_appauth)?;
         Ok(AppAuth(handle))
     }
     #[cfg(target_os = "android")]
     {
-        let handle = _api.register_android_plugin(PLUGIN_IDENTIFIER, "OAuthSessionPlugin")?;
+        let handle = _api.register_android_plugin(PLUGIN_IDENTIFIER, "AppAuthPlugin")?;
         Ok(AppAuth(handle))
     }
     #[cfg(not(mobile))]
