@@ -1,0 +1,47 @@
+{
+	"name": "tauri-plugin-glazier",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"main": "dist-js/index.cjs",
+	"module": "dist-js/index.js",
+	"types": "dist-js/index.d.ts",
+	"exports": {
+		".": {
+			"import": "./dist-js/index.js",
+			"require": "./dist-js/index.cjs",
+			"types": "./dist-js/index.d.ts"
+		}
+	},
+	"files": [
+		"dist-js",
+		"api-iife.js",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"build": "bun run build:esm && bun run build:cjs && bun run build:iife && bun run build:types",
+		"build:esm": "bun build guest-js/index.ts --outfile dist-js/index.js --format esm --external @tauri-apps/api",
+		"build:cjs": "bun build guest-js/index.ts --outfile dist-js/index.cjs --format cjs --external @tauri-apps/api",
+		"build:iife": "bun run scripts/build-iife.ts",
+		"build:types": "bun x tsc --emitDeclarationOnly",
+		"commit": "cz"
+	},
+	"dependencies": {
+		"@tauri-apps/api": "^2"
+	},
+	"devDependencies": {
+		"@commitlint/cli": "^19.8.1",
+		"@commitlint/config-conventional": "^19.8.1",
+		"@commitlint/cz-commitlint": "^19.8.1",
+		"commitizen": "^4.3.1",
+		"cz-conventional-changelog": "^3.3.0",
+		"inquirer": "^9.3.8",
+		"typescript": "^5"
+	},
+	"config": {
+		"commitizen": {
+			"path": "./node_modules/cz-conventional-changelog"
+		}
+	}
+}
