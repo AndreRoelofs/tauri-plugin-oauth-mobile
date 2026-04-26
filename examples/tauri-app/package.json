@@ -11,6 +11,7 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
 	},
 	"dependencies": {
+		"@eurora-labs/tauri-plugin-appauth": "file:../..",
 		"@tauri-apps/api": "^2"
 	},
 	"devDependencies": {
