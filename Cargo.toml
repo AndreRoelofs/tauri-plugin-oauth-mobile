@@ -2,8 +2,8 @@
 name = "tauri-plugin-oauth-session"
 version = "0.1.0"
 description = "Tauri plugin that drives OAuth flows through ASWebAuthenticationSession on iOS and Chrome Custom Tabs on Android."
-edition.workspace = true
-license = "LicenseRef-Eurora-SUL-AND-Apache-2.0"
+edition = "2024"
+license = "Apache-2.0"
 publish = false
 links = "tauri-plugin-oauth-session"
 
