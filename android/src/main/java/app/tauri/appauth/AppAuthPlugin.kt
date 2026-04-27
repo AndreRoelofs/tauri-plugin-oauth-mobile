@@ -86,19 +86,8 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
             invoke.reject("invalid request: ${e.message}", ErrorMapping.CODE_INVALID_REQUEST, e)
             return
         }
-        val issuerUri = Uri.parse(args.issuer)
-        AuthorizationServiceConfiguration.fetchFromIssuer(issuerUri) { config, ex ->
-            if (ex != null) {
-                ErrorMapping.reject(invoke, ex)
-                return@fetchFromIssuer
-            }
-            if (config == null) {
-                invoke.reject(
-                    "discovery returned no configuration",
-                    ErrorMapping.CODE_SERVER_ERROR
-                )
-                return@fetchFromIssuer
-            }
+        val source = ConfigSource.Discovery().apply { issuer = args.issuer }
+        resolveServiceConfiguration(invoke, source) { config ->
             invoke.resolveObject(serviceConfigurationResponse(config))
         }
     }
@@ -172,7 +161,7 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
         resetPendingFlowInvoke()
         pendingFlowInvoke = invoke
 
-        emit(AuthEvent.BrowserOpened)
+        emit(AuthEvent.BROWSER_OPENED)
         startActivityForResult(invoke, intent, "handleAuthorizeResult")
     }
 
@@ -195,8 +184,8 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
             return
         }
 
-        emit(AuthEvent.RedirectIntercepted)
-        emit(AuthEvent.TokenExchangeStarted)
+        emit(AuthEvent.REDIRECT_INTERCEPTED)
+        emit(AuthEvent.TOKEN_EXCHANGE_STARTED)
 
         val tokenRequest = response.createTokenExchangeRequest()
         authService().performTokenRequest(tokenRequest) { tokenResponse, tokenEx ->
@@ -211,7 +200,7 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
                 )
                 return@performTokenRequest
             }
-            emit(AuthEvent.TokenExchangeCompleted)
+            emit(AuthEvent.TOKEN_EXCHANGE_COMPLETED)
             invoke.resolveObject(authStateResponse(response, tokenResponse))
         }
     }
@@ -253,7 +242,7 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
         resetPendingFlowInvoke()
         pendingFlowInvoke = invoke
 
-        emit(AuthEvent.BrowserOpened)
+        emit(AuthEvent.BROWSER_OPENED)
         val intent = BrowserSessionActivity.newIntent(activity, authUri)
         startActivityForResult(invoke, intent, "handleBrowserOnlyResult")
     }
@@ -271,7 +260,7 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
                     )
                     return
                 }
-                emit(AuthEvent.RedirectIntercepted)
+                emit(AuthEvent.REDIRECT_INTERCEPTED)
                 invoke.resolveObject(BrowserOnlyResponse(url = data.toString()))
             }
             BrowserSessionActivity.RESULT_BROWSER_NOT_AVAILABLE -> {
@@ -311,7 +300,7 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
                 }
                 .build()
 
-            emit(AuthEvent.TokenExchangeStarted)
+            emit(AuthEvent.TOKEN_EXCHANGE_STARTED)
             authService().performTokenRequest(tokenRequest) { response, ex ->
                 if (ex != null) {
                     ErrorMapping.reject(invoke, ex)
@@ -324,7 +313,7 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
                     )
                     return@performTokenRequest
                 }
-                emit(AuthEvent.TokenExchangeCompleted)
+                emit(AuthEvent.TOKEN_EXCHANGE_COMPLETED)
                 invoke.resolveObject(authStateResponse(authResponse = null, tokenResponse = response))
             }
         }
@@ -383,7 +372,7 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
             resetPendingFlowInvoke()
             pendingFlowInvoke = invoke
 
-            emit(AuthEvent.BrowserOpened)
+            emit(AuthEvent.BROWSER_OPENED)
             startActivityForResult(invoke, intent, "handleEndSessionResult")
         }
     }
@@ -406,7 +395,7 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
             )
             return
         }
-        emit(AuthEvent.RedirectIntercepted)
+        emit(AuthEvent.REDIRECT_INTERCEPTED)
         invoke.resolveObject(EndSessionResponseModel(
             url = response.request.postLogoutRedirectUri.toString(),
             state = response.state
@@ -575,12 +564,7 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
 
     private fun parseUri(value: String?): Uri? {
         if (value.isNullOrEmpty()) return null
-        return try {
-            val uri = Uri.parse(value)
-            if (uri.scheme.isNullOrEmpty()) null else uri
-        } catch (_: Exception) {
-            null
-        }
+        return Uri.parse(value).takeUnless { it.scheme.isNullOrEmpty() }
     }
 
     private fun emit(event: AuthEvent) {

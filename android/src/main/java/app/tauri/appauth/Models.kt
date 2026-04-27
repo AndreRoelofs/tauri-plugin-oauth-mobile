@@ -3,11 +3,19 @@
 package app.tauri.appauth
 
 import app.tauri.annotation.InvokeArg
+import com.fasterxml.jackson.annotation.JsonCreator
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonSubTypes
 import com.fasterxml.jackson.annotation.JsonTypeInfo
+import com.fasterxml.jackson.annotation.JsonValue
+import com.fasterxml.jackson.core.JsonGenerator
+import com.fasterxml.jackson.databind.JsonSerializer
+import com.fasterxml.jackson.databind.SerializerProvider
+import com.fasterxml.jackson.databind.annotation.JsonSerialize
 
 // MARK: - Inputs decoded from JS payloads
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 @InvokeArg
 class DiscoverArgs {
     lateinit var issuer: String
@@ -25,11 +33,13 @@ class DiscoverArgs {
     JsonSubTypes.Type(value = ConfigSource.Explicit::class, name = "explicit"),
 )
 sealed class ConfigSource {
+    @JsonIgnoreProperties(ignoreUnknown = true)
     @InvokeArg
     class Discovery : ConfigSource() {
         lateinit var issuer: String
     }
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     @InvokeArg
     class Explicit : ConfigSource() {
         lateinit var authorizationEndpoint: String
@@ -47,22 +57,24 @@ enum class Prompt(val value: String) {
     SELECT_ACCOUNT("select_account"),
     NONE("none");
 
+    @JsonValue
+    fun toValue(): String = value
+
     companion object {
-        @com.fasterxml.jackson.annotation.JsonCreator
+        @JsonCreator
         @JvmStatic
         fun fromString(value: String): Prompt? =
-            values().firstOrNull { it.value == value }
+            entries.firstOrNull { it.value == value }
     }
-
-    @com.fasterxml.jackson.annotation.JsonValue
-    fun toValue(): String = value
 }
 
 /// Custom Tabs has no equivalent of iOS's `prefersEphemeralSession`: it always
 /// shares cookies with the user's default browser. The corresponding field
 /// from the JS payload is therefore intentionally absent on the Android arg
-/// classes — Jackson's `FAIL_ON_UNKNOWN_PROPERTIES` is disabled in the Tauri
-/// runtime mapper so JSON carrying the field still parses cleanly.
+/// classes — `@JsonIgnoreProperties(ignoreUnknown = true)` makes that contract
+/// self-describing instead of relying on the Tauri runtime mapper's lenient
+/// global default.
+@JsonIgnoreProperties(ignoreUnknown = true)
 @InvokeArg
 class AuthorizeArgs {
     lateinit var config: ConfigSource
@@ -76,12 +88,14 @@ class AuthorizeArgs {
     var useNonce: Boolean = true
 }
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 @InvokeArg
 class BrowserOnlyArgs {
     lateinit var authUrl: String
     lateinit var redirectUri: String
 }
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 @InvokeArg
 class RefreshArgs {
     lateinit var config: ConfigSource
@@ -91,6 +105,7 @@ class RefreshArgs {
     var additionalParameters: Map<String, String> = emptyMap()
 }
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 @InvokeArg
 class RegisterArgs {
     lateinit var config: ConfigSource
@@ -103,6 +118,7 @@ class RegisterArgs {
     var additionalParameters: Map<String, String> = emptyMap()
 }
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 @InvokeArg
 class EndSessionArgs {
     lateinit var config: ConfigSource
@@ -114,6 +130,7 @@ class EndSessionArgs {
     var additionalParameters: Map<String, String> = emptyMap()
 }
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 @InvokeArg
 class SubscribeEventsArgs {
     lateinit var channel: app.tauri.plugin.Channel
@@ -163,13 +180,25 @@ data class EndSessionResponseModel(
     val state: String?,
 )
 
-/// Diagnostic event mirroring `crate::events::AuthEvent`. Tagged on `kind`,
-/// camelCase values to match the Rust serde shape.
-data class AuthEvent(val kind: String) {
-    companion object {
-        val BrowserOpened = AuthEvent("browserOpened")
-        val RedirectIntercepted = AuthEvent("redirectIntercepted")
-        val TokenExchangeStarted = AuthEvent("tokenExchangeStarted")
-        val TokenExchangeCompleted = AuthEvent("tokenExchangeCompleted")
+/// Diagnostic event mirroring `crate::events::AuthEvent` and the iOS
+/// `AuthEvent` enum (`AppAuthPlugin.swift`). Encoded as `{"kind": "<camelCase>"}`
+/// to match the Rust serde shape (`#[serde(tag = "kind", rename_all = "camelCase")]`).
+@JsonSerialize(using = AuthEvent.Serializer::class)
+enum class AuthEvent(val kind: String) {
+    BROWSER_OPENED("browserOpened"),
+    REDIRECT_INTERCEPTED("redirectIntercepted"),
+    TOKEN_EXCHANGE_STARTED("tokenExchangeStarted"),
+    TOKEN_EXCHANGE_COMPLETED("tokenExchangeCompleted");
+
+    internal class Serializer : JsonSerializer<AuthEvent>() {
+        override fun serialize(
+            value: AuthEvent,
+            gen: JsonGenerator,
+            serializers: SerializerProvider,
+        ) {
+            gen.writeStartObject()
+            gen.writeStringField("kind", value.kind)
+            gen.writeEndObject()
+        }
     }
 }

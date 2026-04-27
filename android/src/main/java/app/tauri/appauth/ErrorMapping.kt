@@ -43,15 +43,6 @@ object ErrorMapping {
         invoke.reject(message, code, ex, if (data.length() > 0) data else null)
     }
 
-    /// Reject with a fixed code (e.g. for our own input validation).
-    fun reject(invoke: Invoke, code: String, message: String, ex: Throwable? = null) {
-        invoke.reject(
-            message,
-            code,
-            if (ex is Exception) ex else null
-        )
-    }
-
     /// `TYPE_GENERAL_ERROR` covers transport, browser, and validation failures.
     /// We split them into the per-cause buckets the JS layer needs.
     private fun mapGeneral(ex: AuthorizationException): String {

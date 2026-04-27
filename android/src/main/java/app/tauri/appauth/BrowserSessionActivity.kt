@@ -3,9 +3,11 @@
 package app.tauri.appauth
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import androidx.activity.ComponentActivity
 import androidx.browser.customtabs.CustomTabsIntent
 
 /// Hosts the back-channel for `authorizeBrowserOnly`.
@@ -22,7 +24,7 @@ import androidx.browser.customtabs.CustomTabsIntent
 /// state-preservation behaviour around process death matches what users get
 /// for the full `authorize` flow. See the `AppAuth-Android` source for the
 /// full lifecycle reasoning.
-class BrowserSessionActivity : Activity() {
+class BrowserSessionActivity : ComponentActivity() {
 
     private var browserStarted: Boolean = false
     private var authUri: Uri? = null
@@ -36,22 +38,20 @@ class BrowserSessionActivity : Activity() {
         if (authUri == null) {
             setResult(RESULT_CANCELED)
             finish()
+            return
         }
     }
 
     override fun onResume() {
         super.onResume()
+        // `onCreate` finishes the activity when `authUri` is null, so by the
+        // time we reach `onResume` it is guaranteed to be non-null.
+        val uri = authUri ?: return
 
         // First foreground pass: launch Custom Tabs and wait. We come back to
         // `onResume` either via `onNewIntent` (redirect succeeded) or via a
         // user-driven dismissal (`RESULT_CANCELED`).
         if (!browserStarted) {
-            val uri = authUri
-            if (uri == null) {
-                setResult(RESULT_CANCELED)
-                finish()
-                return
-            }
             try {
                 CustomTabsIntent.Builder().build().launchUrl(this, uri)
                 browserStarted = true
@@ -100,7 +100,7 @@ class BrowserSessionActivity : Activity() {
         /// to the caller. AppAuth-Android's `AuthorizationManagementActivity`
         /// follows the same convention. Cross-task launches return
         /// `RESULT_CANCELED` to the caller before the redirect arrives.
-        fun newIntent(context: android.content.Context, authUri: Uri): Intent =
+        fun newIntent(context: Context, authUri: Uri): Intent =
             Intent(context, BrowserSessionActivity::class.java)
                 .putExtra(EXTRA_AUTH_URI, authUri.toString())
     }
