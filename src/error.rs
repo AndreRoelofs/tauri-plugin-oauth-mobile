@@ -132,3 +132,52 @@ impl Serialize for Error {
         .serialize(serializer)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Error;
+
+    fn expected_code(err: &Error) -> &'static str {
+        match err {
+            Error::UserCanceled => "USER_CANCELED",
+            Error::AuthorizationFailed { .. } => "AUTHORIZATION_FAILED",
+            Error::TokenExchangeFailed { .. } => "TOKEN_EXCHANGE_FAILED",
+            Error::NetworkError(_) => "NETWORK_ERROR",
+            Error::InvalidRegistrationResponse(_) => "INVALID_REGISTRATION_RESPONSE",
+            Error::IdTokenValidationFailed(_) => "ID_TOKEN_VALIDATION_FAILED",
+            Error::BrowserNotAvailable => "BROWSER_NOT_AVAILABLE",
+            Error::InvalidRequest(_) => "INVALID_REQUEST",
+            Error::ServerError(_) => "SERVER_ERROR",
+            Error::UnsupportedPlatform => "UNSUPPORTED_PLATFORM",
+            #[cfg(mobile)]
+            Error::PluginInvoke(_) => "PLUGIN_INVOKE_FAILED",
+        }
+    }
+
+    #[test]
+    fn code_covers_every_variant() {
+        let cases = [
+            Error::UserCanceled,
+            Error::AuthorizationFailed {
+                message: String::new(),
+                oauth_error: None,
+                oauth_error_description: None,
+            },
+            Error::TokenExchangeFailed {
+                message: String::new(),
+                oauth_error: None,
+                oauth_error_description: None,
+            },
+            Error::NetworkError(String::new()),
+            Error::InvalidRegistrationResponse(String::new()),
+            Error::IdTokenValidationFailed(String::new()),
+            Error::BrowserNotAvailable,
+            Error::InvalidRequest(String::new()),
+            Error::ServerError(String::new()),
+            Error::UnsupportedPlatform,
+        ];
+        for err in &cases {
+            assert_eq!(err.code(), expected_code(err));
+        }
+    }
+}
