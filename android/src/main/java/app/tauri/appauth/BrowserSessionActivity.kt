@@ -24,7 +24,9 @@ import androidx.browser.customtabs.CustomTabsIntent
 /// state-preservation behaviour around process death matches what users get
 /// for the full `authorize` flow. See the `AppAuth-Android` source for the
 /// full lifecycle reasoning.
-class BrowserSessionActivity : ComponentActivity() {
+// `open` so unit tests can subclass and stub `startActivity` for the
+// browser-not-available path; the activity is otherwise self-contained.
+open class BrowserSessionActivity : ComponentActivity() {
 
     private var browserStarted: Boolean = false
     private var authUri: Uri? = null
