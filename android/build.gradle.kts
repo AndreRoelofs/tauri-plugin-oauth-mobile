@@ -1,3 +1,9 @@
+// Toolchain floor:
+//   * Android Gradle Plugin 8.6+   (required for compileSdk 36)
+//   * Kotlin 2.1+                  (matches `settings.gradle` plugin pin)
+//   * JDK 17                       (sourceCompatibility / jvmTarget below)
+// Host Tauri apps pinning older AGP versions must upgrade before consuming
+// this library.
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
@@ -14,11 +20,6 @@ android {
         consumerProguardFiles("consumer-rules.pro")
     }
 
-    buildTypes {
-        release {
-            isMinifyEnabled = false
-        }
-    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -33,11 +34,13 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.browser:browser:1.8.0")
     implementation("net.openid:appauth:0.11.1")
-    // The shared Tauri runtime exposes Jackson at runtime via
-    // `implementation`, so we need our own compile-time pull-in for the
-    // `@JsonTypeInfo` / `@JsonSubTypes` / `@JsonSerialize` annotations and
-    // the `JsonSerializer` API used by `AuthEvent`.
-    implementation("com.fasterxml.jackson.core:jackson-annotations:2.15.3")
+    // Annotations carry no executable code, and the host Tauri runtime
+    // brings a matching `jackson-annotations` in transitively via
+    // `jackson-databind`. `compileOnly` avoids version skew with whatever
+    // the host pins. Databind itself stays `implementation` because
+    // `AuthEvent.Serializer` subclasses `JsonSerializer`, which must
+    // resolve at runtime when this library is built in isolation.
+    compileOnly("com.fasterxml.jackson.core:jackson-annotations:2.15.3")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.15.3")
     implementation(project(":tauri-android"))
 }
