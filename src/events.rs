@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// Diagnostic events emitted by the native AppAuth runtime as a flow
+/// Diagnostic events emitted by the native `AppAuth` runtime as a flow
 /// progresses. Subscribers receive these via a `Channel<AuthEvent>`
 /// registered with [`crate::AppAuth::subscribe_events`].
 ///
@@ -15,7 +15,7 @@ pub enum AuthEvent {
     BrowserOpened,
     /// The OS handed the redirect URI back to the plugin.
     RedirectIntercepted,
-    /// AppAuth has started the back-channel `code → token` exchange.
+    /// `AppAuth` has started the back-channel `code → token` exchange.
     TokenExchangeStarted,
     /// The token endpoint responded successfully.
     TokenExchangeCompleted,

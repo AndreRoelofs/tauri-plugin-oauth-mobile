@@ -2,7 +2,7 @@ use serde::{Serialize, Serializer};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Errors raised by the plugin. Codes mirror AppAuth's iOS `OIDErrorCode` and
+/// Errors raised by the plugin. Codes mirror `AppAuth`'s iOS `OIDErrorCode` and
 /// Android `AuthorizationException` categories so the JS layer sees the same
 /// shape on both platforms.
 #[derive(Debug, thiserror::Error)]
@@ -69,6 +69,7 @@ pub enum Error {
 impl Error {
     /// Stable, machine-readable code that the JS layer can switch on without
     /// parsing free-form messages.
+    #[must_use] 
     pub fn code(&self) -> &'static str {
         match self {
             Error::UserCanceled => "USER_CANCELED",

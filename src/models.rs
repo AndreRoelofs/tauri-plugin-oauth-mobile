@@ -60,7 +60,7 @@ pub struct AuthorizeRequest {
     pub config: ConfigSource,
     pub client_id: String,
     /// Custom-scheme URI (e.g. `com.example.app:/oauth/callback`) or HTTPS
-    /// app-link. AppAuth validates that the redirect handler is registered
+    /// app-link. `AppAuth` validates that the redirect handler is registered
     /// with the OS before opening the browser.
     pub redirect_uri: String,
     #[serde(default)]
@@ -78,11 +78,12 @@ pub struct AuthorizeRequest {
     /// browser).
     #[serde(default = "default_true")]
     pub prefers_ephemeral_session: bool,
-    /// When `true`, AppAuth generates and validates an OIDC `nonce`. Default
-    /// `true` if `scopes` contains `openid`; otherwise the field is set but
-    /// the native side can opt out per-provider.
-    #[serde(default = "default_true")]
-    pub use_nonce: bool,
+    /// Whether `AppAuth` should generate and validate an OIDC `nonce`.
+    /// `Some(true)` forces nonce on; `Some(false)` forces it off. `None`
+    /// (the default) leaves the choice to the native side, which opts in
+    /// when `scopes` contains `openid` and out otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_nonce: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
