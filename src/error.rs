@@ -1,5 +1,6 @@
 use serde::{Serialize, Serializer};
 
+/// `std::result::Result` specialized to this crate's [`Error`] type.
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Errors raised by the plugin. Codes mirror `AppAuth`'s iOS `OIDErrorCode` and
@@ -16,8 +17,11 @@ pub enum Error {
     /// `access_denied`) or the request never reached it.
     #[error("authorization failed: {message}")]
     AuthorizationFailed {
+        /// Human-readable description of what went wrong.
         message: String,
+        /// `error` token from the OAuth error response, if the server returned one.
         oauth_error: Option<String>,
+        /// `error_description` from the OAuth error response, if present.
         oauth_error_description: Option<String>,
     },
 
@@ -25,8 +29,11 @@ pub enum Error {
     /// `invalid_grant`).
     #[error("token exchange failed: {message}")]
     TokenExchangeFailed {
+        /// Human-readable description of what went wrong.
         message: String,
+        /// `error` token from the OAuth error response, if the server returned one.
         oauth_error: Option<String>,
+        /// `error_description` from the OAuth error response, if present.
         oauth_error_description: Option<String>,
     },
 
@@ -90,7 +97,7 @@ impl Error {
 
 #[derive(Serialize)]
 struct SerializedError<'a> {
-    code: &'a str,
+    code: &'static str,
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     oauth_error: Option<&'a str>,

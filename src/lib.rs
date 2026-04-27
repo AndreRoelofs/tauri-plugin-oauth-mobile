@@ -9,7 +9,7 @@
 //! Desktop targets reject every command with [`Error::UnsupportedPlatform`];
 //! desktop OAuth has its own canonical plugin (`tauri-plugin-oauth`).
 
-#![cfg_attr(not(mobile), allow(dead_code))]
+#![deny(missing_docs)]
 
 use tauri::{
     Manager, Runtime,
@@ -27,12 +27,14 @@ pub use error::{Error, Result};
 pub use events::AuthEvent;
 pub use models::{
     AuthState, AuthorizeRequest, BrowserOnlyRequest, BrowserOnlyResponse, ConfigSource,
-    DiscoverRequest, EndSessionRequest, EndSessionResponse, Prompt, RefreshRequest,
-    RegisterRequest, RegistrationResponse, ServiceConfiguration,
+    DiscoverRequest, EndSessionRequest, EndSessionResponse, ExtensionFields, Prompt, QueryParams,
+    RefreshRequest, RegisterRequest, RegistrationResponse, ServiceConfiguration,
 };
+pub use tauri::ipc::Channel;
 
 /// Extension trait that hangs an [`AppAuth`] handle off any [`Manager`].
 pub trait AppAuthExt<R: Runtime> {
+    /// Returns the plugin handle managed by this Tauri app.
     fn appauth(&self) -> &AppAuth<R>;
 }
 
@@ -42,6 +44,8 @@ impl<R: Runtime, T: Manager<R>> AppAuthExt<R> for T {
     }
 }
 
+/// Build the plugin and register its commands. Pass the result to
+/// `tauri::Builder::plugin`.
 #[must_use]
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("appauth")

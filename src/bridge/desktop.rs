@@ -21,18 +21,22 @@ use crate::{Error, Result};
 pub struct AppAuth<R: Runtime>(PhantomData<fn() -> R>);
 
 impl<R: Runtime> AppAuth<R> {
+    /// Always returns [`Error::UnsupportedPlatform`] on desktop targets.
     pub async fn discover(&self, _req: DiscoverRequest) -> Result<ServiceConfiguration> {
         Err(Error::UnsupportedPlatform)
     }
 
+    /// Always returns [`Error::UnsupportedPlatform`] on desktop targets.
     pub async fn register(&self, _req: RegisterRequest) -> Result<RegistrationResponse> {
         Err(Error::UnsupportedPlatform)
     }
 
+    /// Always returns [`Error::UnsupportedPlatform`] on desktop targets.
     pub async fn authorize(&self, _req: AuthorizeRequest) -> Result<AuthState> {
         Err(Error::UnsupportedPlatform)
     }
 
+    /// Always returns [`Error::UnsupportedPlatform`] on desktop targets.
     pub async fn authorize_browser_only(
         &self,
         _req: BrowserOnlyRequest,
@@ -40,14 +44,17 @@ impl<R: Runtime> AppAuth<R> {
         Err(Error::UnsupportedPlatform)
     }
 
+    /// Always returns [`Error::UnsupportedPlatform`] on desktop targets.
     pub async fn refresh(&self, _req: RefreshRequest) -> Result<AuthState> {
         Err(Error::UnsupportedPlatform)
     }
 
+    /// Always returns [`Error::UnsupportedPlatform`] on desktop targets.
     pub async fn end_session(&self, _req: EndSessionRequest) -> Result<EndSessionResponse> {
         Err(Error::UnsupportedPlatform)
     }
 
+    /// Always returns [`Error::UnsupportedPlatform`] on desktop targets.
     pub async fn subscribe_events(&self, _channel: Channel<AuthEvent>) -> Result<()> {
         Err(Error::UnsupportedPlatform)
     }
