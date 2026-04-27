@@ -58,6 +58,11 @@ enum class Prompt(val value: String) {
     fun toValue(): String = value
 }
 
+/// Custom Tabs has no equivalent of iOS's `prefersEphemeralSession`: it always
+/// shares cookies with the user's default browser. The corresponding field
+/// from the JS payload is therefore intentionally absent on the Android arg
+/// classes — Jackson's `FAIL_ON_UNKNOWN_PROPERTIES` is disabled in the Tauri
+/// runtime mapper so JSON carrying the field still parses cleanly.
 @InvokeArg
 class AuthorizeArgs {
     lateinit var config: ConfigSource
@@ -68,7 +73,6 @@ class AuthorizeArgs {
     var prompt: Prompt? = null
     var loginHint: String? = null
     var uiLocales: List<String>? = null
-    var prefersEphemeralSession: Boolean = true
     var useNonce: Boolean = true
 }
 
@@ -76,7 +80,6 @@ class AuthorizeArgs {
 class BrowserOnlyArgs {
     lateinit var authUrl: String
     lateinit var redirectUri: String
-    var prefersEphemeralSession: Boolean = true
 }
 
 @InvokeArg
@@ -103,11 +106,12 @@ class RegisterArgs {
 @InvokeArg
 class EndSessionArgs {
     lateinit var config: ConfigSource
-    lateinit var idTokenHint: String
+    /// Optional per RFC 8665 / OIDC RP-Initiated Logout: the parameter is
+    /// RECOMMENDED, not REQUIRED. Some IdPs accept end-session without it.
+    var idTokenHint: String? = null
     lateinit var postLogoutRedirectUri: String
     var state: String? = null
     var additionalParameters: Map<String, String> = emptyMap()
-    var prefersEphemeralSession: Boolean = true
 }
 
 @InvokeArg

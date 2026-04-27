@@ -3,6 +3,8 @@
 package app.tauri.appauth
 
 import android.app.Activity
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.result.ActivityResult
 import app.tauri.annotation.ActivityCallback
@@ -41,16 +43,17 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
     private var authService: AuthorizationService? = null
     private var eventChannel: Channel? = null
 
-    /// Tracks the in-flight `authorize` or `endSession` `Invoke` so a
-    /// subsequent call can reject the previous one with `USER_CANCELED`
-    /// instead of leaving the JS Promise hanging. Mirrors iOS's
-    /// `currentSession`. The Tauri Android SDK exposes a single
-    /// `startActivityForResult` callback slot, so a single tracker is the
-    /// closest reflection of the underlying transport.
-    private var pendingActivityInvoke: Invoke? = null
+    /// Tracks the in-flight browser-mediated flow's `Invoke` (any of
+    /// `authorize`, `authorizeBrowserOnly`, or `endSession`) so a subsequent
+    /// call can reject the previous one with `USER_CANCELED` instead of
+    /// leaving the JS Promise hanging. Mirrors iOS's `currentSession`. The
+    /// Tauri Android SDK exposes a single `startActivityForResult` callback
+    /// slot, so a single tracker is the closest reflection of the underlying
+    /// transport.
+    private var pendingFlowInvoke: Invoke? = null
 
     override fun onDestroy() {
-        resetPendingActivityInvoke()
+        resetPendingFlowInvoke()
         authService?.dispose()
         authService = null
         super.onDestroy()
@@ -166,8 +169,8 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
         // Reject any in-flight authorize / endSession Promise before launching
         // the next browser intent so a second `authorize()` from JS does not
         // leave the first one hanging forever.
-        resetPendingActivityInvoke()
-        pendingActivityInvoke = invoke
+        resetPendingFlowInvoke()
+        pendingFlowInvoke = invoke
 
         emit(AuthEvent.BrowserOpened)
         startActivityForResult(invoke, intent, "handleAuthorizeResult")
@@ -175,7 +178,7 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
 
     @ActivityCallback
     fun handleAuthorizeResult(invoke: Invoke, result: ActivityResult) {
-        clearPendingActivityInvoke(invoke)
+        clearPendingFlowInvoke(invoke)
         val data = result.data
         val response = data?.let { AuthorizationResponse.fromIntent(it) }
         val exception = data?.let { AuthorizationException.fromIntent(it) }
@@ -227,6 +230,28 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
             invoke.reject("invalid auth URL: ${args.authUrl}", ErrorMapping.CODE_INVALID_REQUEST)
             return
         }
+        val redirectUri = parseUri(args.redirectUri) ?: run {
+            invoke.reject(
+                "invalid redirect URI: ${args.redirectUri}",
+                ErrorMapping.CODE_INVALID_REQUEST
+            )
+            return
+        }
+        if (!validateBrowserRedirect(redirectUri)) {
+            invoke.reject(
+                "redirect URI scheme is not registered for BrowserSessionActivity; " +
+                    "set manifestPlaceholders[\"tauriBrowserRedirectScheme\"] = " +
+                    "\"${redirectUri.scheme}\"",
+                ErrorMapping.CODE_INVALID_REQUEST
+            )
+            return
+        }
+
+        // Reject any in-flight authorize / endSession / browser-only Promise
+        // before launching the next browser intent so a second JS call does
+        // not leave the first one hanging forever.
+        resetPendingFlowInvoke()
+        pendingFlowInvoke = invoke
 
         emit(AuthEvent.BrowserOpened)
         val intent = BrowserSessionActivity.newIntent(activity, authUri)
@@ -235,6 +260,7 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
 
     @ActivityCallback
     fun handleBrowserOnlyResult(invoke: Invoke, result: ActivityResult) {
+        clearPendingFlowInvoke(invoke)
         when (result.resultCode) {
             Activity.RESULT_OK -> {
                 val data = result.data?.data
@@ -331,9 +357,11 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
                 return@resolveServiceConfiguration
             }
             val request = EndSessionRequest.Builder(config)
-                .setIdTokenHint(args.idTokenHint)
                 .setPostLogoutRedirectUri(postLogoutUri)
                 .apply {
+                    // RFC 8665 / OIDC RP-Initiated Logout marks `id_token_hint`
+                    // as RECOMMENDED, not REQUIRED.
+                    args.idTokenHint?.let { setIdTokenHint(it) }
                     args.state?.let { setState(it) }
                     if (args.additionalParameters.isNotEmpty()) {
                         setAdditionalParameters(args.additionalParameters)
@@ -352,8 +380,8 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
                 return@resolveServiceConfiguration
             }
 
-            resetPendingActivityInvoke()
-            pendingActivityInvoke = invoke
+            resetPendingFlowInvoke()
+            pendingFlowInvoke = invoke
 
             emit(AuthEvent.BrowserOpened)
             startActivityForResult(invoke, intent, "handleEndSessionResult")
@@ -362,7 +390,7 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
 
     @ActivityCallback
     fun handleEndSessionResult(invoke: Invoke, result: ActivityResult) {
-        clearPendingActivityInvoke(invoke)
+        clearPendingFlowInvoke(invoke)
         val data = result.data
         val response = data?.let { EndSessionResponse.fromIntent(it) }
         val exception = data?.let { AuthorizationException.fromIntent(it) }
@@ -421,9 +449,14 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
             if (args.grantTypes.isNotEmpty()) builder.setGrantTypeValues(args.grantTypes)
             args.subjectTypes.firstOrNull()?.let { builder.setSubjectType(it) }
             args.tokenEndpointAuthMethod?.let { builder.setTokenEndpointAuthenticationMethod(it) }
-            if (args.additionalParameters.isNotEmpty()) {
-                builder.setAdditionalParameters(args.additionalParameters)
+            // RFC 7591 names the client display name `client_name`. AppAuth-Android
+            // exposes it through `additional_parameters`; merge our typed field in
+            // there, letting any explicit caller-supplied entry win on collision.
+            val params = buildMap {
+                args.clientName?.let { put("client_name", it) }
+                putAll(args.additionalParameters)
             }
+            if (params.isNotEmpty()) builder.setAdditionalParameters(params)
 
             authService().performRegistrationRequest(builder.build()) { response, ex ->
                 if (ex != null) {
@@ -495,14 +528,14 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
-    /// Reject the previously-tracked authorize / endSession `Invoke` with
+    /// Reject the previously-tracked browser-mediated `Invoke` with
     /// `USER_CANCELED`, so a stale Promise resolves before a new flow starts.
     /// The browser activity launched for the prior flow continues running
     /// (Custom Tabs cannot be programmatically dismissed); only the JS-facing
     /// Promise is affected.
-    private fun resetPendingActivityInvoke() {
-        val previous = pendingActivityInvoke ?: return
-        pendingActivityInvoke = null
+    private fun resetPendingFlowInvoke() {
+        val previous = pendingFlowInvoke ?: return
+        pendingFlowInvoke = null
         previous.reject(
             "authorization flow superseded by a new request",
             ErrorMapping.CODE_USER_CANCELED
@@ -512,9 +545,31 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
     /// Clear the tracked `Invoke` once its activity result has been delivered,
     /// so a subsequent flow does not double-reject a Promise we already
     /// resolved.
-    private fun clearPendingActivityInvoke(invoke: Invoke) {
-        if (pendingActivityInvoke === invoke) {
-            pendingActivityInvoke = null
+    private fun clearPendingFlowInvoke(invoke: Invoke) {
+        if (pendingFlowInvoke === invoke) {
+            pendingFlowInvoke = null
+        }
+    }
+
+    /// Verify the JS-supplied redirect URI's scheme resolves to *our*
+    /// `BrowserSessionActivity`. Mirrors AppAuth-Android's
+    /// `RedirectUriReceiverActivity` registration check, and matches iOS's
+    /// upfront validation of the redirect scheme — silent divergence between
+    /// the two platforms is a foot-gun the next person debugs at 2am.
+    ///
+    /// Host apps configure the scheme via
+    /// `manifestPlaceholders["tauriBrowserRedirectScheme"]`.
+    private fun validateBrowserRedirect(redirect: Uri): Boolean {
+        val probe = Intent(Intent.ACTION_VIEW, redirect)
+            .addCategory(Intent.CATEGORY_BROWSABLE)
+            .addCategory(Intent.CATEGORY_DEFAULT)
+        val matches = activity.packageManager.queryIntentActivities(
+            probe,
+            PackageManager.MATCH_DEFAULT_ONLY
+        )
+        return matches.any {
+            it.activityInfo.packageName == activity.packageName &&
+                it.activityInfo.name == BrowserSessionActivity::class.java.name
         }
     }
 

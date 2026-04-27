@@ -94,9 +94,14 @@ class BrowserSessionActivity : Activity() {
         private const val KEY_BROWSER_STARTED = "app.tauri.appauth.BROWSER_STARTED"
 
         /// Build the intent the plugin hands to `startActivityForResult`.
+        ///
+        /// No `FLAG_ACTIVITY_NEW_TASK`: the activity must run inside the host
+        /// app's task so `startActivityForResult` can deliver the result back
+        /// to the caller. AppAuth-Android's `AuthorizationManagementActivity`
+        /// follows the same convention. Cross-task launches return
+        /// `RESULT_CANCELED` to the caller before the redirect arrives.
         fun newIntent(context: android.content.Context, authUri: Uri): Intent =
             Intent(context, BrowserSessionActivity::class.java)
                 .putExtra(EXTRA_AUTH_URI, authUri.toString())
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 }

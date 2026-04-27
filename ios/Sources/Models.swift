@@ -148,7 +148,9 @@ struct RegisterRequest: Decodable {
 
 struct EndSessionRequest: Decodable {
     let config: ConfigSource
-    let idTokenHint: String
+    /// Optional per RFC 8665 / OIDC RP-Initiated Logout: the parameter is
+    /// RECOMMENDED, not REQUIRED, and some IdPs accept end-session without it.
+    let idTokenHint: String?
     let postLogoutRedirectUri: String
     let state: String?
     @DefaultEmptyDictionary<String, String> var additionalParameters: [String: String]

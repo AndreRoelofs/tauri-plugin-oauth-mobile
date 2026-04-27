@@ -470,11 +470,18 @@ class AppAuthPlugin: Plugin {
         config: OIDServiceConfiguration,
         postLogoutURL: URL
     ) {
+        // AppAuth-iOS annotates `idTokenHint:` as non-nullable in Swift even
+        // though the Objective-C implementation accepts nil and only emits
+        // `id_token_hint` to the URL when its backing ivar is non-nil. Pass a
+        // placeholder when absent and immediately clear the ivar through KVC
+        // so RFC 8665 RP-Initiated Logout works for IdPs that accept the
+        // request without an ID token hint.
+        let hintForInit = args.idTokenHint ?? ""
         let request: OIDEndSessionRequest
         if let state = args.state {
             request = OIDEndSessionRequest(
                 configuration: config,
-                idTokenHint: args.idTokenHint,
+                idTokenHint: hintForInit,
                 postLogoutRedirectURL: postLogoutURL,
                 state: state,
                 additionalParameters: args.additionalParameters
@@ -482,10 +489,13 @@ class AppAuthPlugin: Plugin {
         } else {
             request = OIDEndSessionRequest(
                 configuration: config,
-                idTokenHint: args.idTokenHint,
+                idTokenHint: hintForInit,
                 postLogoutRedirectURL: postLogoutURL,
                 additionalParameters: args.additionalParameters
             )
+        }
+        if args.idTokenHint == nil {
+            request.setValue(nil, forKey: "idTokenHint")
         }
 
         guard let presenter = self.presentationViewController() else {

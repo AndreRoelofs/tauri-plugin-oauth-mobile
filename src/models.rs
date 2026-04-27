@@ -272,9 +272,12 @@ pub struct RegistrationResponse {
 pub struct EndSessionRequest {
     /// How endpoints are resolved (discovery vs. explicit).
     pub config: ConfigSource,
-    /// `id_token` from the session being terminated; binds the logout to a
-    /// specific authenticated user.
-    pub id_token_hint: String,
+    /// `id_token` from the session being terminated, used to bind the logout
+    /// to a specific authenticated user. Optional per RFC 8665 / OIDC
+    /// RP-Initiated Logout: the parameter is RECOMMENDED, not REQUIRED, and
+    /// some IdPs accept end-session without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id_token_hint: Option<String>,
     /// URI the issuer should redirect to after logout completes.
     pub post_logout_redirect_uri: String,
     /// Opaque value echoed back via the post-logout redirect, for CSRF

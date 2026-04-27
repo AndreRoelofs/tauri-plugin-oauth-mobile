@@ -224,12 +224,32 @@ fn end_session_request() {
         config: ConfigSource::Discovery {
             issuer: "https://issuer.example.com".into(),
         },
-        id_token_hint: "it".into(),
+        id_token_hint: Some("it".into()),
         post_logout_redirect_uri: "com.example.app:/post-logout".into(),
         state: Some("opaque".into()),
         additional_parameters: [("ui_locales".into(), "en".into())].into_iter().collect(),
         prefers_ephemeral_session: true,
     });
+}
+
+#[test]
+fn end_session_request_omits_id_token_hint() {
+    let value = EndSessionRequest {
+        config: ConfigSource::Discovery {
+            issuer: "https://issuer.example.com".into(),
+        },
+        id_token_hint: None,
+        post_logout_redirect_uri: "com.example.app:/post-logout".into(),
+        state: None,
+        additional_parameters: Default::default(),
+        prefers_ephemeral_session: true,
+    };
+    let json = serde_json::to_value(&value).expect("serialize");
+    assert!(
+        json.get("idTokenHint").is_none(),
+        "absent idTokenHint must be omitted from the wire payload, got: {json}",
+    );
+    round_trip(value);
 }
 
 #[test]

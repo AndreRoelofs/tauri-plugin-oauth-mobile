@@ -104,7 +104,7 @@ fn end_session_returns_unsupported() {
     let app = app();
     let res = tauri::async_runtime::block_on(app.appauth().end_session(EndSessionRequest {
         config: discovery(),
-        id_token_hint: "it".into(),
+        id_token_hint: Some("it".into()),
         post_logout_redirect_uri: "com.example.app:/post-logout".into(),
         state: None,
         additional_parameters: Default::default(),
