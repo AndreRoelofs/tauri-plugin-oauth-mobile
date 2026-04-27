@@ -69,7 +69,7 @@ pub enum Error {
 impl Error {
     /// Stable, machine-readable code that the JS layer can switch on without
     /// parsing free-form messages.
-    #[must_use] 
+    #[must_use]
     pub fn code(&self) -> &'static str {
         match self {
             Error::UserCanceled => "USER_CANCELED",

@@ -13,12 +13,6 @@ use crate::models::{
 };
 use crate::{Error, Result};
 
-#[cfg(target_os = "ios")]
-tauri::ios_plugin_binding!(init_plugin_appauth);
-
-#[cfg(target_os = "android")]
-const PLUGIN_IDENTIFIER: &str = "app.tauri.appauth";
-
 /// Handle to the AppAuth-backed plugin. Acquired via [`crate::AppAuthExt::appauth`].
 pub struct AppAuth<R: Runtime>(PluginHandle<R>);
 
@@ -73,12 +67,7 @@ impl<R: Runtime> AppAuth<R> {
         struct Payload<'a> {
             channel: &'a Channel<AuthEvent>,
         }
-        invoke(
-            &self.0,
-            "subscribeEvents",
-            &Payload { channel: &channel },
-        )
-        .await
+        invoke(&self.0, "subscribeEvents", &Payload { channel: &channel }).await
     }
 }
 
@@ -114,20 +103,30 @@ where
     }
 }
 
-#[cfg(target_os = "ios")]
-pub(crate) fn init<R: Runtime, C: DeserializeOwned>(
-    _app: &AppHandle<R>,
-    api: PluginApi<R, C>,
-) -> Result<AppAuth<R>> {
-    let handle = api.register_ios_plugin(init_plugin_appauth)?;
-    Ok(AppAuth(handle))
-}
+cfg_select! {
+    target_os = "ios" => {
+        tauri::ios_plugin_binding!(init_plugin_appauth);
 
-#[cfg(target_os = "android")]
-pub(crate) fn init<R: Runtime, C: DeserializeOwned>(
-    _app: &AppHandle<R>,
-    api: PluginApi<R, C>,
-) -> Result<AppAuth<R>> {
-    let handle = api.register_android_plugin(PLUGIN_IDENTIFIER, "AppAuthPlugin")?;
-    Ok(AppAuth(handle))
+        pub(crate) fn init<R: Runtime, C: DeserializeOwned>(
+            _app: &AppHandle<R>,
+            api: PluginApi<R, C>,
+        ) -> Result<AppAuth<R>> {
+            let handle = api.register_ios_plugin(init_plugin_appauth)?;
+            Ok(AppAuth(handle))
+        }
+    }
+    target_os = "android" => {
+        const PLUGIN_IDENTIFIER: &str = "app.tauri.appauth";
+
+        pub(crate) fn init<R: Runtime, C: DeserializeOwned>(
+            _app: &AppHandle<R>,
+            api: PluginApi<R, C>,
+        ) -> Result<AppAuth<R>> {
+            let handle = api.register_android_plugin(PLUGIN_IDENTIFIER, "AppAuthPlugin")?;
+            Ok(AppAuth(handle))
+        }
+    }
+    _ => {
+        compile_error!("tauri-plugin-appauth bridge/mobile.rs requires target_os = \"ios\" or \"android\"");
+    }
 }

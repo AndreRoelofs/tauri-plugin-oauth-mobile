@@ -42,7 +42,7 @@ impl<R: Runtime, T: Manager<R>> AppAuthExt<R> for T {
     }
 }
 
-#[must_use] 
+#[must_use]
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("appauth")
         .invoke_handler(tauri::generate_handler![
