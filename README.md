@@ -25,7 +25,7 @@ Cargo:
 
 ```toml
 [dependencies]
-tauri-plugin-appauth = "0.1"
+tauri-plugin-appauth = "0.2"
 ```
 
 npm / bun:

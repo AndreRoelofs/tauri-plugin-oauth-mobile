@@ -1,6 +1,6 @@
 [package]
 name = "tauri-plugin-appauth"
-version = "0.1.0"
+version = "0.2.0"
 description = "Tauri 2 mobile plugin that bridges OAuth 2.0 / OIDC flows to AppAuth-iOS and AppAuth-Android."
 edition = "2024"
 rust-version = "1.95"
