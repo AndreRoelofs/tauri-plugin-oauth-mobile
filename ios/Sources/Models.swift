@@ -51,37 +51,51 @@ enum ConfigSource: Decodable {
     }
 
     /// Resolve to an `OIDServiceConfiguration`, hitting the discovery endpoint
-    /// when needed. Completion fires on the main queue.
-    func resolve(completion: @escaping (OIDServiceConfiguration?, Error?) -> Void) {
+    /// when needed.
+    ///
+    /// Async wrapper around AppAuth's callback-based discovery: the suspension
+    /// resumes on the caller's actor, so `@MainActor` callers stay on main
+    /// without having to dispatch defensively.
+    func resolve() async throws -> OIDServiceConfiguration {
         switch self {
         case .discovery(let issuer):
             guard let issuerURL = URL(string: issuer) else {
-                DispatchQueue.main.async {
-                    completion(nil, AppAuthBridgeError.invalidRequest("invalid issuer URL: \(issuer)"))
-                }
-                return
+                throw AppAuthBridgeError.invalidRequest("invalid issuer URL: \(issuer)")
             }
-            OIDAuthorizationService.discoverConfiguration(forIssuer: issuerURL) { config, error in
-                completion(config, error)
-            }
+            return try await Self.discover(issuerURL: issuerURL)
         case .explicit(let authEndpoint, let tokenEndpoint, let endSessionEndpoint, let registrationEndpoint):
             guard
                 let authURL = URL(string: authEndpoint),
                 let tokenURL = URL(string: tokenEndpoint)
             else {
-                DispatchQueue.main.async {
-                    completion(nil, AppAuthBridgeError.invalidRequest("invalid endpoint URL"))
-                }
-                return
+                throw AppAuthBridgeError.invalidRequest("invalid endpoint URL")
             }
-            let config = OIDServiceConfiguration(
+            return OIDServiceConfiguration(
                 authorizationEndpoint: authURL,
                 tokenEndpoint: tokenURL,
                 issuer: nil,
                 registrationEndpoint: registrationEndpoint.flatMap(URL.init(string:)),
                 endSessionEndpoint: endSessionEndpoint.flatMap(URL.init(string:))
             )
-            DispatchQueue.main.async { completion(config, nil) }
+        }
+    }
+
+    /// Bridge `OIDAuthorizationService.discoverConfiguration` to `async throws`.
+    /// Public so `discover` can hit the same path without round-tripping through
+    /// a `ConfigSource` value.
+    static func discover(issuerURL: URL) async throws -> OIDServiceConfiguration {
+        return try await withCheckedThrowingContinuation { continuation in
+            OIDAuthorizationService.discoverConfiguration(forIssuer: issuerURL) { config, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                guard let config = config else {
+                    continuation.resume(throwing: AppAuthBridgeError.serverError("discovery returned no configuration"))
+                    return
+                }
+                continuation.resume(returning: config)
+            }
         }
     }
 }
@@ -98,98 +112,38 @@ struct AuthorizeRequest: Decodable {
     let config: ConfigSource
     let clientId: String
     let redirectUri: String
-    let scopes: [String]
-    let additionalParameters: [String: String]
+    @DefaultEmptyArray<String> var scopes: [String]
+    @DefaultEmptyDictionary<String, String> var additionalParameters: [String: String]
     let prompt: Prompt?
     let loginHint: String?
     let uiLocales: [String]?
-    let prefersEphemeralSession: Bool
-    let useNonce: Bool
-
-    private enum CodingKeys: String, CodingKey {
-        case config, clientId, redirectUri, scopes, additionalParameters
-        case prompt, loginHint, uiLocales, prefersEphemeralSession, useNonce
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        config = try c.decode(ConfigSource.self, forKey: .config)
-        clientId = try c.decode(String.self, forKey: .clientId)
-        redirectUri = try c.decode(String.self, forKey: .redirectUri)
-        scopes = try c.decodeIfPresent([String].self, forKey: .scopes) ?? []
-        additionalParameters = try c.decodeIfPresent([String: String].self, forKey: .additionalParameters) ?? [:]
-        prompt = try c.decodeIfPresent(Prompt.self, forKey: .prompt)
-        loginHint = try c.decodeIfPresent(String.self, forKey: .loginHint)
-        uiLocales = try c.decodeIfPresent([String].self, forKey: .uiLocales)
-        prefersEphemeralSession = try c.decodeIfPresent(Bool.self, forKey: .prefersEphemeralSession) ?? true
-        useNonce = try c.decodeIfPresent(Bool.self, forKey: .useNonce) ?? true
-    }
+    @DefaultTrue var prefersEphemeralSession: Bool
+    @DefaultTrue var useNonce: Bool
 }
 
 struct BrowserOnlyRequest: Decodable {
     let authUrl: String
     let redirectUri: String
-    let prefersEphemeralSession: Bool
-
-    private enum CodingKeys: String, CodingKey {
-        case authUrl, redirectUri, prefersEphemeralSession
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        authUrl = try c.decode(String.self, forKey: .authUrl)
-        redirectUri = try c.decode(String.self, forKey: .redirectUri)
-        prefersEphemeralSession = try c.decodeIfPresent(Bool.self, forKey: .prefersEphemeralSession) ?? true
-    }
+    @DefaultTrue var prefersEphemeralSession: Bool
 }
 
 struct RefreshRequest: Decodable {
     let config: ConfigSource
     let clientId: String
     let refreshToken: String
-    let scopes: [String]
-    let additionalParameters: [String: String]
-
-    private enum CodingKeys: String, CodingKey {
-        case config, clientId, refreshToken, scopes, additionalParameters
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        config = try c.decode(ConfigSource.self, forKey: .config)
-        clientId = try c.decode(String.self, forKey: .clientId)
-        refreshToken = try c.decode(String.self, forKey: .refreshToken)
-        scopes = try c.decodeIfPresent([String].self, forKey: .scopes) ?? []
-        additionalParameters = try c.decodeIfPresent([String: String].self, forKey: .additionalParameters) ?? [:]
-    }
+    @DefaultEmptyArray<String> var scopes: [String]
+    @DefaultEmptyDictionary<String, String> var additionalParameters: [String: String]
 }
 
 struct RegisterRequest: Decodable {
     let config: ConfigSource
     let redirectUris: [String]
     let clientName: String?
-    let responseTypes: [String]
-    let grantTypes: [String]
-    let subjectTypes: [String]
+    @DefaultEmptyArray<String> var responseTypes: [String]
+    @DefaultEmptyArray<String> var grantTypes: [String]
+    @DefaultEmptyArray<String> var subjectTypes: [String]
     let tokenEndpointAuthMethod: String?
-    let additionalParameters: [String: String]
-
-    private enum CodingKeys: String, CodingKey {
-        case config, redirectUris, clientName, responseTypes, grantTypes
-        case subjectTypes, tokenEndpointAuthMethod, additionalParameters
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        config = try c.decode(ConfigSource.self, forKey: .config)
-        redirectUris = try c.decode([String].self, forKey: .redirectUris)
-        clientName = try c.decodeIfPresent(String.self, forKey: .clientName)
-        responseTypes = try c.decodeIfPresent([String].self, forKey: .responseTypes) ?? []
-        grantTypes = try c.decodeIfPresent([String].self, forKey: .grantTypes) ?? []
-        subjectTypes = try c.decodeIfPresent([String].self, forKey: .subjectTypes) ?? []
-        tokenEndpointAuthMethod = try c.decodeIfPresent(String.self, forKey: .tokenEndpointAuthMethod)
-        additionalParameters = try c.decodeIfPresent([String: String].self, forKey: .additionalParameters) ?? [:]
-    }
+    @DefaultEmptyDictionary<String, String> var additionalParameters: [String: String]
 }
 
 struct EndSessionRequest: Decodable {
@@ -197,23 +151,8 @@ struct EndSessionRequest: Decodable {
     let idTokenHint: String
     let postLogoutRedirectUri: String
     let state: String?
-    let additionalParameters: [String: String]
-    let prefersEphemeralSession: Bool
-
-    private enum CodingKeys: String, CodingKey {
-        case config, idTokenHint, postLogoutRedirectUri, state
-        case additionalParameters, prefersEphemeralSession
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        config = try c.decode(ConfigSource.self, forKey: .config)
-        idTokenHint = try c.decode(String.self, forKey: .idTokenHint)
-        postLogoutRedirectUri = try c.decode(String.self, forKey: .postLogoutRedirectUri)
-        state = try c.decodeIfPresent(String.self, forKey: .state)
-        additionalParameters = try c.decodeIfPresent([String: String].self, forKey: .additionalParameters) ?? [:]
-        prefersEphemeralSession = try c.decodeIfPresent(Bool.self, forKey: .prefersEphemeralSession) ?? true
-    }
+    @DefaultEmptyDictionary<String, String> var additionalParameters: [String: String]
+    @DefaultTrue var prefersEphemeralSession: Bool
 }
 
 // MARK: - Outputs encoded to JS responses
@@ -236,11 +175,7 @@ struct ServiceConfigurationResponse: Encodable {
         // can pick up provider-specific extensions (e.g. `userinfo_endpoint`).
         // Stringify nested arrays / objects to keep the wire shape uniform; the
         // typed fields above remain the primary source of truth.
-        if let discovery = config.discoveryDocument {
-            additionalParameters = stringifyAnyDictionary(discovery.discoveryDictionary)
-        } else {
-            additionalParameters = [:]
-        }
+        additionalParameters = stringifyDictionary(config.discoveryDocument?.discoveryDictionary)
     }
 }
 
@@ -274,6 +209,13 @@ struct AuthStateResponse: Encodable {
 
     /// Construct from a bare `OIDTokenResponse` (e.g. refresh flows where there
     /// is no preceding authorization response).
+    ///
+    /// The refresh-token fallback to `tokenResponse.request.refreshToken` is
+    /// required by RFC 6749 §6: the authorization server MAY but is not
+    /// required to issue a new refresh token in a refresh response. When it
+    /// doesn't, callers must continue using the original refresh token, so we
+    /// echo it back. Removing the fallback would silently break the next
+    /// refresh after a server that opts out of rotation.
     init(from tokenResponse: OIDTokenResponse) {
         accessToken = tokenResponse.accessToken
         accessTokenExpiresAt = tokenResponse.accessTokenExpirationDate.map { Int64($0.timeIntervalSince1970) }
@@ -324,12 +266,73 @@ struct EndSessionResponseModel: Encodable {
 /// mapper can handle them.
 enum AppAuthBridgeError: LocalizedError {
     case invalidRequest(String)
+    case serverError(String)
 
     var errorDescription: String? {
         switch self {
-        case .invalidRequest(let message): return message
+        case .invalidRequest(let message), .serverError(let message): return message
         }
     }
+}
+
+// MARK: - Redirect URI parsing
+
+/// How `ASWebAuthenticationSession` should intercept the redirect.
+///
+/// Custom-scheme URIs (`com.example.app:/oauth/callback`) use the legacy
+/// `callbackURLScheme:` initializer. HTTPS Universal Links use the iOS 17.4+
+/// `Callback.https(host:path:)` initializer; older iOS versions reject before
+/// constructing the session.
+enum RedirectKind: Equatable {
+    case customScheme(String)
+    case universalLink(host: String, path: String)
+}
+
+/// Syntactic validation for redirect URIs.
+///
+/// A valid URI must have a non-empty scheme and at least one of: a non-empty
+/// host or a path beginning with `/`. This rejects bare-scheme strings like
+/// `com.example:` that would otherwise reach AppAuth and fail late with a
+/// confusing error.
+func validateRedirect(_ uri: String) throws -> URL {
+    let trimmed = uri.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard
+        !trimmed.isEmpty,
+        let url = URL(string: trimmed),
+        let components = URLComponents(string: trimmed),
+        let scheme = components.scheme, !scheme.isEmpty
+    else {
+        throw AppAuthBridgeError.invalidRequest("invalid redirect URI: \(uri)")
+    }
+    let hasHost = !(components.host?.isEmpty ?? true)
+    let hasPath = components.path.hasPrefix("/")
+    guard hasHost || hasPath else {
+        throw AppAuthBridgeError.invalidRequest(
+            "redirect URI must include a host or a path beginning with '/': \(uri)"
+        )
+    }
+    return url
+}
+
+/// Classify a previously-validated redirect URL for `ASWebAuthenticationSession`.
+///
+/// HTTPS URLs (Universal Links) require a host; custom schemes carry their
+/// scheme verbatim. Returns `nil` only if `validateRedirect` would have thrown.
+func redirectKind(for url: URL) -> RedirectKind? {
+    guard
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+        let scheme = components.scheme, !scheme.isEmpty
+    else {
+        return nil
+    }
+    if scheme.lowercased() == "https" {
+        guard let host = components.host, !host.isEmpty else {
+            return nil
+        }
+        let path = components.path.isEmpty ? "/" : components.path
+        return .universalLink(host: host, path: path)
+    }
+    return .customScheme(scheme)
 }
 
 /// Coerce AppAuth's additional-parameter dictionaries to a JSON-encodable
@@ -346,10 +349,6 @@ func stringifyDictionary(_ source: [String: Any]?) -> [String: String] {
         out[key] = stringify(value)
     }
     return out
-}
-
-func stringifyAnyDictionary(_ source: [String: Any]) -> [String: String] {
-    return stringifyDictionary(source)
 }
 
 private func stringify(_ value: Any) -> String {

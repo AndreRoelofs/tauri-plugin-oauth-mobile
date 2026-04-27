@@ -41,7 +41,16 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
     private var authService: AuthorizationService? = null
     private var eventChannel: Channel? = null
 
+    /// Tracks the in-flight `authorize` or `endSession` `Invoke` so a
+    /// subsequent call can reject the previous one with `USER_CANCELED`
+    /// instead of leaving the JS Promise hanging. Mirrors iOS's
+    /// `currentSession`. The Tauri Android SDK exposes a single
+    /// `startActivityForResult` callback slot, so a single tracker is the
+    /// closest reflection of the underlying transport.
+    private var pendingActivityInvoke: Invoke? = null
+
     override fun onDestroy() {
+        resetPendingActivityInvoke()
         authService?.dispose()
         authService = null
         super.onDestroy()
@@ -154,12 +163,19 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
             return
         }
 
+        // Reject any in-flight authorize / endSession Promise before launching
+        // the next browser intent so a second `authorize()` from JS does not
+        // leave the first one hanging forever.
+        resetPendingActivityInvoke()
+        pendingActivityInvoke = invoke
+
         emit(AuthEvent.BrowserOpened)
         startActivityForResult(invoke, intent, "handleAuthorizeResult")
     }
 
     @ActivityCallback
     fun handleAuthorizeResult(invoke: Invoke, result: ActivityResult) {
+        clearPendingActivityInvoke(invoke)
         val data = result.data
         val response = data?.let { AuthorizationResponse.fromIntent(it) }
         val exception = data?.let { AuthorizationException.fromIntent(it) }
@@ -336,6 +352,9 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
                 return@resolveServiceConfiguration
             }
 
+            resetPendingActivityInvoke()
+            pendingActivityInvoke = invoke
+
             emit(AuthEvent.BrowserOpened)
             startActivityForResult(invoke, intent, "handleEndSessionResult")
         }
@@ -343,6 +362,7 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
 
     @ActivityCallback
     fun handleEndSessionResult(invoke: Invoke, result: ActivityResult) {
+        clearPendingActivityInvoke(invoke)
         val data = result.data
         val response = data?.let { EndSessionResponse.fromIntent(it) }
         val exception = data?.let { AuthorizationException.fromIntent(it) }
@@ -383,13 +403,22 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
             )
             return
         }
+        // OIDC discovery advertises `subject_types_supported` as a list, but a
+        // single registration commits to exactly one value — and AppAuth-Android's
+        // `setSubjectType` is a single string. Reject up front rather than
+        // silently dropping later entries, mirroring the iOS bridge.
+        if (args.subjectTypes.size > 1) {
+            invoke.reject(
+                "subjectTypes accepts at most one value (got ${args.subjectTypes.size}); a single registration commits to one subject type",
+                ErrorMapping.CODE_INVALID_REQUEST
+            )
+            return
+        }
 
         resolveServiceConfiguration(invoke, args.config) { config ->
             val builder = RegistrationRequest.Builder(config, redirectUris.filterNotNull())
             if (args.responseTypes.isNotEmpty()) builder.setResponseTypeValues(args.responseTypes)
             if (args.grantTypes.isNotEmpty()) builder.setGrantTypeValues(args.grantTypes)
-            // AppAuth-Android, like the iOS counterpart, takes a single subject
-            // type. The OIDC spec field is plural; we forward the first value.
             args.subjectTypes.firstOrNull()?.let { builder.setSubjectType(it) }
             args.tokenEndpointAuthMethod?.let { builder.setTokenEndpointAuthenticationMethod(it) }
             if (args.additionalParameters.isNotEmpty()) {
@@ -466,6 +495,29 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    /// Reject the previously-tracked authorize / endSession `Invoke` with
+    /// `USER_CANCELED`, so a stale Promise resolves before a new flow starts.
+    /// The browser activity launched for the prior flow continues running
+    /// (Custom Tabs cannot be programmatically dismissed); only the JS-facing
+    /// Promise is affected.
+    private fun resetPendingActivityInvoke() {
+        val previous = pendingActivityInvoke ?: return
+        pendingActivityInvoke = null
+        previous.reject(
+            "authorization flow superseded by a new request",
+            ErrorMapping.CODE_USER_CANCELED
+        )
+    }
+
+    /// Clear the tracked `Invoke` once its activity result has been delivered,
+    /// so a subsequent flow does not double-reject a Promise we already
+    /// resolved.
+    private fun clearPendingActivityInvoke(invoke: Invoke) {
+        if (pendingActivityInvoke === invoke) {
+            pendingActivityInvoke = null
+        }
+    }
+
     private fun parseUri(value: String?): Uri? {
         if (value.isNullOrEmpty()) return null
         return try {
@@ -513,7 +565,11 @@ class AppAuthPlugin(private val activity: Activity) : Plugin(activity) {
     ): AuthStateResponse {
         return AuthStateResponse(
             accessToken = tokenResponse.accessToken,
-            accessTokenExpiresAt = tokenResponse.accessTokenExpirationTime?.let { it / 1000 },
+            // AppAuth-Android exposes `accessTokenExpirationTime` in **milliseconds**
+            // since the Unix epoch (see `TokenResponse#accessTokenExpirationTime`);
+            // iOS / Rust / the cross-platform `AuthState` contract use **seconds**.
+            // Convert here so the wire shape is consistent across platforms.
+            accessTokenExpiresAt = tokenResponse.accessTokenExpirationTime?.let { it / 1000L },
             idToken = tokenResponse.idToken,
             refreshToken = tokenResponse.refreshToken,
             scope = tokenResponse.scope,

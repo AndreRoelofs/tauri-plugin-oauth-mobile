@@ -92,13 +92,28 @@ fn authorize_request_full() {
         login_hint: Some("user@example.com".into()),
         ui_locales: Some(vec!["en-US".into(), "fr".into()]),
         prefers_ephemeral_session: false,
-        use_nonce: Some(true),
+        use_nonce: true,
     });
 }
 
 #[test]
-fn authorize_request_use_nonce_unset() {
-    let req = AuthorizeRequest {
+fn authorize_request_use_nonce_defaults_to_true_when_missing() {
+    let payload = json!({
+        "config": { "kind": "discovery", "issuer": "https://issuer.example.com" },
+        "clientId": "client-123",
+        "redirectUri": "com.example.app:/oauth/callback",
+    });
+    let req: AuthorizeRequest =
+        serde_json::from_value(payload).expect("deserialize with omitted useNonce");
+    assert!(
+        req.use_nonce,
+        "useNonce must default to true when the field is omitted",
+    );
+}
+
+#[test]
+fn authorize_request_use_nonce_round_trip_false() {
+    round_trip(AuthorizeRequest {
         config: ConfigSource::Discovery {
             issuer: "https://issuer.example.com".into(),
         },
@@ -110,13 +125,8 @@ fn authorize_request_use_nonce_unset() {
         login_hint: None,
         ui_locales: None,
         prefers_ephemeral_session: true,
-        use_nonce: None,
-    };
-    let json = serde_json::to_value(&req).unwrap();
-    assert!(
-        json.get("useNonce").is_none(),
-        "use_nonce: None should be omitted from the wire payload, got {json:#}",
-    );
+        use_nonce: false,
+    });
 }
 
 #[test]

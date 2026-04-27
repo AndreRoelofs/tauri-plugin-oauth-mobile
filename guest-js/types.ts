@@ -43,8 +43,11 @@ export interface AuthorizeRequest {
     clientId: string;
     /**
      * Custom-scheme URI (e.g. `com.example.app:/oauth/callback`) or HTTPS
-     * app-link. AppAuth validates that the redirect handler is registered
-     * with the OS before opening the browser.
+     * Universal Link / App Link. AppAuth validates that the redirect handler
+     * is registered with the OS before opening the browser.
+     *
+     * Must include either a host or a path beginning with `/`. Bare schemes
+     * (e.g. `com.example:`) are rejected with `INVALID_REQUEST`.
      */
     redirectUri: string;
     scopes?: string[];
@@ -59,8 +62,11 @@ export interface AuthorizeRequest {
      */
     prefersEphemeralSession?: boolean;
     /**
-     * When `true`, AppAuth generates and validates an OIDC `nonce`. Defaults
-     * to `true` when `scopes` contains `openid`.
+     * Whether AppAuth should generate and validate an OIDC `nonce`. Defaults
+     * to `true` on every platform; set to `false` to opt out for non-OIDC
+     * providers that reject the parameter. OIDC requires the nonce defense for
+     * the `code` flow, so the default is `true` regardless of the requested
+     * scopes.
      */
     useNonce?: boolean;
 }
@@ -84,6 +90,17 @@ export interface BrowserOnlyRequest {
      * and waits for the OS to intercept `redirectUri`.
      */
     authUrl: string;
+    /**
+     * Custom-scheme URI (e.g. `com.example.app:/oauth/callback`) or HTTPS
+     * Universal Link.
+     *
+     * On iOS, HTTPS redirects are routed through
+     * `ASWebAuthenticationSession`'s Universal Link callback, which requires
+     * **iOS 17.4 or later**. Older iOS versions reject HTTPS redirects with
+     * `INVALID_REQUEST` — fall back to a custom scheme to support them.
+     *
+     * Must include either a host or a path beginning with `/`.
+     */
     redirectUri: string;
     prefersEphemeralSession?: boolean;
 }
@@ -111,6 +128,16 @@ export interface RegisterRequest {
     clientName?: string;
     responseTypes?: string[];
     grantTypes?: string[];
+    /**
+     * OIDC `subject_types` the client supports.
+     *
+     * The OIDC discovery field is plural at the metadata level
+     * (`subject_types_supported`), but a registration commits to exactly one
+     * value — and the underlying AppAuth-iOS / AppAuth-Android APIs expose it
+     * as a single string. Pass at most one entry; the plugin rejects payloads
+     * with more than one value as `INVALID_REQUEST` rather than silently
+     * dropping the rest.
+     */
     subjectTypes?: string[];
     tokenEndpointAuthMethod?: string;
     additionalParameters?: Record<string, unknown>;

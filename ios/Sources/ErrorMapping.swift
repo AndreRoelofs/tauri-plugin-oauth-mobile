@@ -67,6 +67,13 @@ enum ErrorMapping {
                     oauthError: nil,
                     oauthErrorDescription: nil
                 )
+            case .serverError(let message):
+                return Mapping(
+                    code: codeServerError,
+                    message: message,
+                    oauthError: nil,
+                    oauthErrorDescription: nil
+                )
             }
         }
         return Mapping(

@@ -15,7 +15,7 @@ TypeScript + Rust API.
 
 | Platform | Status |
 |---|---|
-| iOS 13+ | Supported via AppAuth-iOS |
+| iOS 15+ | Supported via AppAuth-iOS |
 | Android 24+ | Supported via AppAuth-Android |
 | Desktop | Returns `UNSUPPORTED_PLATFORM`; use [`tauri-plugin-oauth`](https://github.com/FabianLars/tauri-plugin-oauth) instead. |
 

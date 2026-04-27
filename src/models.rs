@@ -124,12 +124,13 @@ pub struct AuthorizeRequest {
     /// browser).
     #[serde(default = "default_true")]
     pub prefers_ephemeral_session: bool,
-    /// Whether `AppAuth` should generate and validate an OIDC `nonce`.
-    /// `Some(true)` forces nonce on; `Some(false)` forces it off. `None`
-    /// (the default) leaves the choice to the native side, which opts in
-    /// when `scopes` contains `openid` and out otherwise.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub use_nonce: Option<bool>,
+    /// Whether `AppAuth` should generate and validate an OIDC `nonce`. Defaults
+    /// to `true` — set to `false` to opt out for non-OIDC providers that
+    /// reject the parameter. OIDC requires nonce for the `code` flow and
+    /// AppAuth auto-generates one, so the default matches what the mobile
+    /// platforms can correctly express.
+    #[serde(default = "default_true")]
+    pub use_nonce: bool,
 }
 
 /// Token-bearing state returned by [`crate::AppAuth::authorize`] and

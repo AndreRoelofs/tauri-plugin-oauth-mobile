@@ -1,20 +1,37 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import AppAuth
 import AuthenticationServices
-import Tauri
 import UIKit
+
+// `Tauri.Invoke` and AppAuth's response objects are non-Sendable @objc types
+// without strict-concurrency annotations. Our flow captures them across the
+// IPC-queue → main-actor boundary on purpose (each `Invoke` is resolved by
+// exactly one callback path), so we silence the cross-module Sendable
+// warnings here rather than scatter `nonisolated(unsafe)` through the file.
+@preconcurrency import AppAuth
+@preconcurrency import Tauri
 
 /// Tauri 2 mobile plugin that bridges OAuth 2.0 / OIDC flows to AppAuth-iOS.
 ///
 /// AppAuth owns PKCE (S256), `state`/`nonce` validation, discovery, code-for-token
 /// exchange, refresh, and end-session. This class is glue: parse the JS payload,
-/// dispatch onto the main queue when AppAuth needs the UI, and translate the
-/// AppAuth callback shape into Tauri's `Invoke` resolution / rejection model.
+/// run AppAuth on the main actor, and translate the AppAuth callback shape into
+/// Tauri's `Invoke` resolution / rejection model.
 ///
-/// Long-running flows ( `authorize`, `authorizeBrowserOnly`, `endSession` ) hold
+/// Concurrency: the class is `@MainActor`, so `currentSession`,
+/// `currentBrowserSession`, `currentBrowserPresentationContext`, and
+/// `eventChannel` are accessed from a single isolation domain — no manual
+/// queue management is needed for instance state. Tauri dispatches `@objc`
+/// commands on its own IPC queue; each entry point is `nonisolated` and hops
+/// to main via `Task { @MainActor in … }` before touching `self`. AppAuth's
+/// network callbacks fire on URLSession's delegate queue (background), so
+/// each callback body re-enters the main actor with the same pattern.
+///
+/// Long-running flows (`authorize`, `authorizeBrowserOnly`, `endSession`) hold
 /// their session on `self` so the underlying browser process is not deallocated
-/// while the user is still interacting with it.
+/// while the user is still interacting with it. Starting a new flow cancels the
+/// in-flight one — see `resetCurrentSession()`.
+@MainActor
 class AppAuthPlugin: Plugin {
 
     /// Active AppAuth-managed user-agent session for `authorize` / `endSession`.
@@ -26,11 +43,10 @@ class AppAuthPlugin: Plugin {
     /// to drive, so AppAuth's full state machine is not the right primitive.
     private var currentBrowserSession: ASWebAuthenticationSession?
 
-    /// Provider for `ASWebAuthenticationSession`'s presentation anchor on iOS 13+.
-    /// Lazily populated when `authorizeBrowserOnly` runs.
-    private lazy var browserPresentationContext = BrowserPresentationContext { [weak self] in
-        self?.presentationViewController()
-    }
+    /// Strong reference to the per-session presentation-context provider.
+    /// `ASWebAuthenticationSession.presentationContextProvider` is `weak`, so
+    /// the provider must outlive the session somewhere — that's here.
+    private var currentBrowserPresentationContext: BrowserPresentationContext?
 
     /// Channel registered via `subscribeEvents`. Diagnostic events (browser
     /// opened, redirect intercepted, token-exchange progress) are emitted here.
@@ -38,47 +54,52 @@ class AppAuthPlugin: Plugin {
 
     // MARK: - subscribeEvents
 
-    @objc public func subscribeEvents(_ invoke: Invoke) {
-        struct Args: Decodable { let channel: Channel }
-        do {
-            let args = try invoke.parseArgs(Args.self)
-            eventChannel = args.channel
-            invoke.resolve()
-        } catch {
-            invoke.reject("invalid request: \(error.localizedDescription)", code: ErrorMapping.codeInvalidRequest)
+    @objc public nonisolated func subscribeEvents(_ invoke: Invoke) {
+        Task { @MainActor in
+            struct Args: Decodable { let channel: Channel }
+            do {
+                let args = try invoke.parseArgs(Args.self)
+                self.eventChannel = args.channel
+                invoke.resolve()
+            } catch {
+                invoke.reject("invalid request: \(error.localizedDescription)", code: ErrorMapping.codeInvalidRequest)
+            }
         }
     }
 
     // MARK: - discover
 
-    @objc public func discover(_ invoke: Invoke) {
-        let args: DiscoverRequest
-        do {
-            args = try invoke.parseArgs(DiscoverRequest.self)
-        } catch {
-            invoke.reject("invalid request: \(error.localizedDescription)", code: ErrorMapping.codeInvalidRequest)
-            return
-        }
-        guard let issuerURL = URL(string: args.issuer) else {
-            invoke.reject("invalid issuer URL: \(args.issuer)", code: ErrorMapping.codeInvalidRequest)
-            return
-        }
-        OIDAuthorizationService.discoverConfiguration(forIssuer: issuerURL) { config, error in
-            if let error = error {
+    @objc public nonisolated func discover(_ invoke: Invoke) {
+        Task { @MainActor in
+            let args: DiscoverRequest
+            do {
+                args = try invoke.parseArgs(DiscoverRequest.self)
+            } catch {
+                invoke.reject("invalid request: \(error.localizedDescription)", code: ErrorMapping.codeInvalidRequest)
+                return
+            }
+            guard let issuerURL = URL(string: args.issuer) else {
+                invoke.reject("invalid issuer URL: \(args.issuer)", code: ErrorMapping.codeInvalidRequest)
+                return
+            }
+            do {
+                let config = try await ConfigSource.discover(issuerURL: issuerURL)
+                invoke.resolve(ServiceConfigurationResponse(from: config))
+            } catch {
                 ErrorMapping.reject(invoke, error: error)
-                return
             }
-            guard let config = config else {
-                invoke.reject("discovery returned no configuration", code: ErrorMapping.codeServerError)
-                return
-            }
-            invoke.resolve(ServiceConfigurationResponse(from: config))
         }
     }
 
     // MARK: - authorize
 
-    @objc public func authorize(_ invoke: Invoke) {
+    @objc public nonisolated func authorize(_ invoke: Invoke) {
+        Task { @MainActor in
+            await self.handleAuthorize(invoke)
+        }
+    }
+
+    private func handleAuthorize(_ invoke: Invoke) async {
         let args: AuthorizeRequest
         do {
             args = try invoke.parseArgs(AuthorizeRequest.self)
@@ -86,23 +107,24 @@ class AppAuthPlugin: Plugin {
             invoke.reject("invalid request: \(error.localizedDescription)", code: ErrorMapping.codeInvalidRequest)
             return
         }
-        guard let redirectURL = URL(string: args.redirectUri) else {
-            invoke.reject("invalid redirect URI: \(args.redirectUri)", code: ErrorMapping.codeInvalidRequest)
+
+        let redirectURL: URL
+        do {
+            redirectURL = try validateRedirect(args.redirectUri)
+        } catch {
+            ErrorMapping.reject(invoke, error: error)
             return
         }
 
-        args.config.resolve { [weak self] config, error in
-            guard let self = self else { return }
-            if let error = error {
-                ErrorMapping.reject(invoke, error: error)
-                return
-            }
-            guard let config = config else {
-                invoke.reject("could not resolve service configuration", code: ErrorMapping.codeServerError)
-                return
-            }
-            self.startAuthorize(invoke: invoke, args: args, config: config, redirectURL: redirectURL)
+        let config: OIDServiceConfiguration
+        do {
+            config = try await args.config.resolve()
+        } catch {
+            ErrorMapping.reject(invoke, error: error)
+            return
         }
+
+        startAuthorize(invoke: invoke, args: args, config: config, redirectURL: redirectURL)
     }
 
     private func startAuthorize(
@@ -139,45 +161,48 @@ class AppAuthPlugin: Plugin {
             )
         }
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            guard let presenter = self.presentationViewController() else {
-                invoke.reject("no presenting view controller available", code: ErrorMapping.codeBrowserNotAvailable)
-                return
-            }
-            // Construct the external user agent ourselves rather than going
-            // through `OIDAuthState.authState(byPresenting:presenting:prefersEphemeralSession:callback:)`.
-            // That convenience method lives in the iOS-specific `OIDAuthState
-            // (IOS)` Objective-C category, and Tauri statically links AppAuth
-            // into `libapp.a`. The Mach-O linker only pulls `.o` files from a
-            // static archive when one of their non-category symbols is
-            // referenced, so the category file gets dropped and the selector
-            // goes missing at runtime (`NSInvalidArgumentException:
-            // unrecognized selector sent to class`). Going through the regular
-            // class methods on `OIDExternalUserAgentIOS` and
-            // `OIDAuthState.authState(byPresenting:externalUserAgent:callback:)`
-            // hits only non-category symbols, which the linker keeps without
-            // any `-ObjC` / `-force_load` workarounds in the host app.
-            guard let userAgent = OIDExternalUserAgentIOS(
-                presenting: presenter,
-                prefersEphemeralSession: args.prefersEphemeralSession
-            ) else {
-                invoke.reject(
-                    "could not initialize external user agent",
-                    code: ErrorMapping.codeBrowserNotAvailable
-                )
-                return
-            }
+        guard let presenter = self.presentationViewController() else {
+            invoke.reject("no presenting view controller available", code: ErrorMapping.codeBrowserNotAvailable)
+            return
+        }
+        // Construct the external user agent ourselves rather than going
+        // through `OIDAuthState.authState(byPresenting:presenting:prefersEphemeralSession:callback:)`.
+        // That convenience method lives in the iOS-specific `OIDAuthState
+        // (IOS)` Objective-C category, and Tauri statically links AppAuth
+        // into `libapp.a`. The Mach-O linker only pulls `.o` files from a
+        // static archive when one of their non-category symbols is
+        // referenced, so the category file gets dropped and the selector
+        // goes missing at runtime (`NSInvalidArgumentException:
+        // unrecognized selector sent to class`). Going through the regular
+        // class methods on `OIDExternalUserAgentIOS` and
+        // `OIDAuthState.authState(byPresenting:externalUserAgent:callback:)`
+        // hits only non-category symbols, which the linker keeps without
+        // any `-ObjC` / `-force_load` workarounds in the host app.
+        guard let userAgent = OIDExternalUserAgentIOS(
+            presenting: presenter,
+            prefersEphemeralSession: args.prefersEphemeralSession
+        ) else {
+            invoke.reject(
+                "could not initialize external user agent",
+                code: ErrorMapping.codeBrowserNotAvailable
+            )
+            return
+        }
 
-            self.emit(.browserOpened)
+        // Cancel any in-flight AppAuth session so its callback fires with
+        // `programCanceledAuthorizationFlow` (mapped to `USER_CANCELED`)
+        // and the prior `Invoke` resolves rather than dangling forever.
+        self.resetCurrentSession()
 
-            self.currentSession = OIDAuthState.authState(
-                byPresenting: request,
-                externalUserAgent: userAgent
-            ) { [weak self] authState, error in
-                guard let self = self else { return }
-                self.currentSession = nil
+        self.emit(.browserOpened)
 
+        self.currentSession = OIDAuthState.authState(
+            byPresenting: request,
+            externalUserAgent: userAgent
+        ) { authState, error in
+            // AppAuth's network callback fires on URLSession's delegate queue;
+            // hop back to the main actor before touching `self` or `invoke`.
+            Task { @MainActor in
                 if let error = error {
                     ErrorMapping.reject(invoke, error: error)
                     return
@@ -189,7 +214,6 @@ class AppAuthPlugin: Plugin {
                     )
                     return
                 }
-
                 self.emit(.tokenExchangeCompleted)
                 invoke.resolve(AuthStateResponse(from: authState))
             }
@@ -212,7 +236,13 @@ class AppAuthPlugin: Plugin {
 
     // MARK: - authorizeBrowserOnly
 
-    @objc public func authorizeBrowserOnly(_ invoke: Invoke) {
+    @objc public nonisolated func authorizeBrowserOnly(_ invoke: Invoke) {
+        Task { @MainActor in
+            self.handleAuthorizeBrowserOnly(invoke)
+        }
+    }
+
+    private func handleAuthorizeBrowserOnly(_ invoke: Invoke) {
         let args: BrowserOnlyRequest
         do {
             args = try invoke.parseArgs(BrowserOnlyRequest.self)
@@ -224,58 +254,102 @@ class AppAuthPlugin: Plugin {
             invoke.reject("invalid auth URL: \(args.authUrl)", code: ErrorMapping.codeInvalidRequest)
             return
         }
-        guard let callbackScheme = redirectScheme(for: args.redirectUri) else {
+
+        let redirectURL: URL
+        do {
+            redirectURL = try validateRedirect(args.redirectUri)
+        } catch {
+            ErrorMapping.reject(invoke, error: error)
+            return
+        }
+        guard let kind = redirectKind(for: redirectURL) else {
             invoke.reject(
-                "redirect URI must be a custom scheme or HTTPS app-link: \(args.redirectUri)",
+                "redirect URI is not a custom scheme or HTTPS Universal Link: \(args.redirectUri)",
                 code: ErrorMapping.codeInvalidRequest
             )
             return
         }
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
+        // Cancel any previous browser session before starting a new one so
+        // the system doesn't reject the second call with `.canceledLogin`.
+        self.resetCurrentBrowserSession()
 
-            // Cancel any previous browser session before starting a new one so
-            // the system doesn't reject the second call with `.canceledLogin`.
-            self.currentBrowserSession?.cancel()
+        guard let anchor = self.resolvePresentationAnchor() else {
+            invoke.reject(
+                "no presentation anchor available for the browser session",
+                code: ErrorMapping.codeBrowserNotAvailable
+            )
+            return
+        }
 
-            let session = ASWebAuthenticationSession(
+        // Capture `self` strongly inside the completion handlers below: the
+        // session retains the closure, the closure retains `self`, and the
+        // cycle breaks when the callback fires. This guarantees `invoke`
+        // always resolves — using `[weak self]` here would re-introduce
+        // the orphan-`Invoke` bug that 1.1 closes.
+        let session: ASWebAuthenticationSession
+        switch kind {
+        case .customScheme(let scheme):
+            session = ASWebAuthenticationSession(
                 url: authURL,
-                callbackURLScheme: callbackScheme
-            ) { [weak self] callbackURL, error in
-                guard let self = self else { return }
-                self.currentBrowserSession = nil
-
-                if let error = error {
-                    self.handleBrowserOnlyError(invoke: invoke, error: error)
-                    return
+                callbackURLScheme: scheme
+            ) { callbackURL, error in
+                Task { @MainActor in
+                    self.handleBrowserOnlyCompletion(invoke: invoke, callbackURL: callbackURL, error: error)
                 }
-                guard let callbackURL = callbackURL else {
-                    invoke.reject(
-                        "browser session ended without a redirect",
-                        code: ErrorMapping.codeAuthorizationFailed
-                    )
-                    return
-                }
-
-                self.emit(.redirectIntercepted)
-                invoke.resolve(BrowserOnlyResponse(url: callbackURL.absoluteString))
             }
 
-            session.presentationContextProvider = self.browserPresentationContext
-            session.prefersEphemeralWebBrowserSession = args.prefersEphemeralSession
-
-            self.currentBrowserSession = session
-            if session.start() {
-                self.emit(.browserOpened)
-            } else {
-                self.currentBrowserSession = nil
+        case .universalLink(let host, let path):
+            guard #available(iOS 17.4, *) else {
                 invoke.reject(
-                    "could not start an authentication session",
-                    code: ErrorMapping.codeBrowserNotAvailable
+                    "HTTPS Universal Link redirects require iOS 17.4 or later",
+                    code: ErrorMapping.codeInvalidRequest
                 )
+                return
+            }
+            session = ASWebAuthenticationSession(
+                url: authURL,
+                callback: .https(host: host, path: path)
+            ) { callbackURL, error in
+                Task { @MainActor in
+                    self.handleBrowserOnlyCompletion(invoke: invoke, callbackURL: callbackURL, error: error)
+                }
             }
         }
+
+        let presentationContext = BrowserPresentationContext(anchor: anchor)
+        session.presentationContextProvider = presentationContext
+        session.prefersEphemeralWebBrowserSession = args.prefersEphemeralSession
+
+        self.currentBrowserSession = session
+        self.currentBrowserPresentationContext = presentationContext
+
+        if session.start() {
+            self.emit(.browserOpened)
+        } else {
+            self.currentBrowserSession = nil
+            self.currentBrowserPresentationContext = nil
+            invoke.reject(
+                "could not start an authentication session",
+                code: ErrorMapping.codeBrowserNotAvailable
+            )
+        }
+    }
+
+    private func handleBrowserOnlyCompletion(invoke: Invoke, callbackURL: URL?, error: Error?) {
+        if let error = error {
+            handleBrowserOnlyError(invoke: invoke, error: error)
+            return
+        }
+        guard let callbackURL = callbackURL else {
+            invoke.reject(
+                "browser session ended without a redirect",
+                code: ErrorMapping.codeAuthorizationFailed
+            )
+            return
+        }
+        emit(.redirectIntercepted)
+        invoke.resolve(BrowserOnlyResponse(url: callbackURL.absoluteString))
     }
 
     private func handleBrowserOnlyError(invoke: Invoke, error: Error) {
@@ -289,19 +363,15 @@ class AppAuthPlugin: Plugin {
         ErrorMapping.reject(invoke, error: error)
     }
 
-    /// Extract the scheme component of a redirect URI (e.g. `com.example.app:/cb`
-    /// → `com.example.app`). HTTPS app-links return `https`, which
-    /// `ASWebAuthenticationSession` accepts on iOS 17.4+ for Universal Links.
-    private func redirectScheme(for uri: String) -> String? {
-        guard let scheme = URLComponents(string: uri)?.scheme, !scheme.isEmpty else {
-            return nil
-        }
-        return scheme
-    }
-
     // MARK: - refresh
 
-    @objc public func refresh(_ invoke: Invoke) {
+    @objc public nonisolated func refresh(_ invoke: Invoke) {
+        Task { @MainActor in
+            await self.handleRefresh(invoke)
+        }
+    }
+
+    private func handleRefresh(_ invoke: Invoke) async {
         let args: RefreshRequest
         do {
             args = try invoke.parseArgs(RefreshRequest.self)
@@ -310,34 +380,32 @@ class AppAuthPlugin: Plugin {
             return
         }
 
-        args.config.resolve { [weak self] config, error in
-            guard let self = self else { return }
-            if let error = error {
-                ErrorMapping.reject(invoke, error: error)
-                return
-            }
-            guard let config = config else {
-                invoke.reject("could not resolve service configuration", code: ErrorMapping.codeServerError)
-                return
-            }
+        let config: OIDServiceConfiguration
+        do {
+            config = try await args.config.resolve()
+        } catch {
+            ErrorMapping.reject(invoke, error: error)
+            return
+        }
 
-            let scope = args.scopes.isEmpty ? nil : args.scopes.joined(separator: " ")
-            let tokenRequest = OIDTokenRequest(
-                configuration: config,
-                grantType: OIDGrantTypeRefreshToken,
-                authorizationCode: nil,
-                redirectURL: nil,
-                clientID: args.clientId,
-                clientSecret: nil,
-                scope: scope,
-                refreshToken: args.refreshToken,
-                codeVerifier: nil,
-                additionalParameters: args.additionalParameters
-            )
+        let scope = args.scopes.isEmpty ? nil : args.scopes.joined(separator: " ")
+        let tokenRequest = OIDTokenRequest(
+            configuration: config,
+            grantType: OIDGrantTypeRefreshToken,
+            authorizationCode: nil,
+            redirectURL: nil,
+            clientID: args.clientId,
+            clientSecret: nil,
+            scope: scope,
+            refreshToken: args.refreshToken,
+            codeVerifier: nil,
+            additionalParameters: args.additionalParameters
+        )
 
-            self.emit(.tokenExchangeStarted)
+        self.emit(.tokenExchangeStarted)
 
-            OIDAuthorizationService.perform(tokenRequest) { [weak self] response, error in
+        OIDAuthorizationService.perform(tokenRequest) { [weak self] response, error in
+            Task { @MainActor in
                 if let error = error {
                     ErrorMapping.reject(invoke, error: error)
                     return
@@ -357,7 +425,13 @@ class AppAuthPlugin: Plugin {
 
     // MARK: - endSession
 
-    @objc public func endSession(_ invoke: Invoke) {
+    @objc public nonisolated func endSession(_ invoke: Invoke) {
+        Task { @MainActor in
+            await self.handleEndSession(invoke)
+        }
+    }
+
+    private func handleEndSession(_ invoke: Invoke) async {
         let args: EndSessionRequest
         do {
             args = try invoke.parseArgs(EndSessionRequest.self)
@@ -365,31 +439,29 @@ class AppAuthPlugin: Plugin {
             invoke.reject("invalid request: \(error.localizedDescription)", code: ErrorMapping.codeInvalidRequest)
             return
         }
-        guard let postLogoutURL = URL(string: args.postLogoutRedirectUri) else {
-            invoke.reject(
-                "invalid post-logout redirect URI: \(args.postLogoutRedirectUri)",
-                code: ErrorMapping.codeInvalidRequest
-            )
+
+        let postLogoutURL: URL
+        do {
+            postLogoutURL = try validateRedirect(args.postLogoutRedirectUri)
+        } catch {
+            ErrorMapping.reject(invoke, error: error)
             return
         }
 
-        args.config.resolve { [weak self] config, error in
-            guard let self = self else { return }
-            if let error = error {
-                ErrorMapping.reject(invoke, error: error)
-                return
-            }
-            guard let config = config else {
-                invoke.reject("could not resolve service configuration", code: ErrorMapping.codeServerError)
-                return
-            }
-            self.startEndSession(
-                invoke: invoke,
-                args: args,
-                config: config,
-                postLogoutURL: postLogoutURL
-            )
+        let config: OIDServiceConfiguration
+        do {
+            config = try await args.config.resolve()
+        } catch {
+            ErrorMapping.reject(invoke, error: error)
+            return
         }
+
+        startEndSession(
+            invoke: invoke,
+            args: args,
+            config: config,
+            postLogoutURL: postLogoutURL
+        )
     }
 
     private func startEndSession(
@@ -416,29 +488,27 @@ class AppAuthPlugin: Plugin {
             )
         }
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            guard let presenter = self.presentationViewController() else {
-                invoke.reject("no presenting view controller available", code: ErrorMapping.codeBrowserNotAvailable)
-                return
-            }
-            guard let userAgent = OIDExternalUserAgentIOS(
-                presenting: presenter,
-                prefersEphemeralSession: args.prefersEphemeralSession
-            ) else {
-                invoke.reject("could not initialize external user agent", code: ErrorMapping.codeBrowserNotAvailable)
-                return
-            }
+        guard let presenter = self.presentationViewController() else {
+            invoke.reject("no presenting view controller available", code: ErrorMapping.codeBrowserNotAvailable)
+            return
+        }
+        guard let userAgent = OIDExternalUserAgentIOS(
+            presenting: presenter,
+            prefersEphemeralSession: args.prefersEphemeralSession
+        ) else {
+            invoke.reject("could not initialize external user agent", code: ErrorMapping.codeBrowserNotAvailable)
+            return
+        }
 
-            self.emit(.browserOpened)
+        self.resetCurrentSession()
 
-            self.currentSession = OIDAuthorizationService.present(
-                request,
-                externalUserAgent: userAgent
-            ) { [weak self] response, error in
-                guard let self = self else { return }
-                self.currentSession = nil
+        self.emit(.browserOpened)
 
+        self.currentSession = OIDAuthorizationService.present(
+            request,
+            externalUserAgent: userAgent
+        ) { response, error in
+            Task { @MainActor in
                 if let error = error {
                     ErrorMapping.reject(invoke, error: error)
                     return
@@ -458,7 +528,13 @@ class AppAuthPlugin: Plugin {
 
     // MARK: - register (RFC 7591 dynamic client registration)
 
-    @objc public func register(_ invoke: Invoke) {
+    @objc public nonisolated func register(_ invoke: Invoke) {
+        Task { @MainActor in
+            await self.handleRegister(invoke)
+        }
+    }
+
+    private func handleRegister(_ invoke: Invoke) async {
         let args: RegisterRequest
         do {
             args = try invoke.parseArgs(RegisterRequest.self)
@@ -467,9 +543,11 @@ class AppAuthPlugin: Plugin {
             return
         }
 
-        let redirectURLs = args.redirectUris.compactMap(URL.init(string:))
-        if redirectURLs.count != args.redirectUris.count {
-            invoke.reject("one or more redirect URIs are invalid", code: ErrorMapping.codeInvalidRequest)
+        let redirectURLs: [URL]
+        do {
+            redirectURLs = try args.redirectUris.map(validateRedirect)
+        } catch {
+            ErrorMapping.reject(invoke, error: error)
             return
         }
         if redirectURLs.isEmpty {
@@ -477,31 +555,38 @@ class AppAuthPlugin: Plugin {
             return
         }
 
-        args.config.resolve { config, error in
-            if let error = error {
-                ErrorMapping.reject(invoke, error: error)
-                return
-            }
-            guard let config = config else {
-                invoke.reject("could not resolve service configuration", code: ErrorMapping.codeServerError)
-                return
-            }
-
-            // AppAuth-iOS exposes `subjectType` as a single string. The OIDC
-            // spec field is plural; we accept the array on the JS side and
-            // forward the first value, which matches every provider in the
-            // wild that issues distinct types per registration.
-            let request = OIDRegistrationRequest(
-                configuration: config,
-                redirectURIs: redirectURLs,
-                responseTypes: args.responseTypes.isEmpty ? nil : args.responseTypes,
-                grantTypes: args.grantTypes.isEmpty ? nil : args.grantTypes,
-                subjectType: args.subjectTypes.first,
-                tokenEndpointAuthMethod: args.tokenEndpointAuthMethod,
-                additionalParameters: args.additionalParameters
+        // OIDC discovery advertises `subject_types_supported` as a list, but a
+        // single registration commits to exactly one value — and AppAuth-iOS's
+        // `subjectType` is a single string. Reject up front rather than
+        // silently dropping later entries, so callers see the contract clearly.
+        if args.subjectTypes.count > 1 {
+            invoke.reject(
+                "subjectTypes accepts at most one value (got \(args.subjectTypes.count)); a single registration commits to one subject type",
+                code: ErrorMapping.codeInvalidRequest
             )
+            return
+        }
 
-            OIDAuthorizationService.perform(request) { response, error in
+        let config: OIDServiceConfiguration
+        do {
+            config = try await args.config.resolve()
+        } catch {
+            ErrorMapping.reject(invoke, error: error)
+            return
+        }
+
+        let request = OIDRegistrationRequest(
+            configuration: config,
+            redirectURIs: redirectURLs,
+            responseTypes: args.responseTypes.isEmpty ? nil : args.responseTypes,
+            grantTypes: args.grantTypes.isEmpty ? nil : args.grantTypes,
+            subjectType: args.subjectTypes.first,
+            tokenEndpointAuthMethod: args.tokenEndpointAuthMethod,
+            additionalParameters: args.additionalParameters
+        )
+
+        OIDAuthorizationService.perform(request) { response, error in
+            Task { @MainActor in
                 if let error = error {
                     ErrorMapping.reject(invoke, error: error)
                     return
@@ -520,7 +605,23 @@ class AppAuthPlugin: Plugin {
 
     // MARK: - Internal helpers
 
-    /// Best-effort source for the presentation anchor.
+    /// Cancel any in-flight AppAuth session so its callback fires with
+    /// `programCanceledAuthorizationFlow` and the prior `Invoke` is rejected.
+    /// Calling `cancel()` on a completed session is a no-op per AppAuth's API.
+    private func resetCurrentSession() {
+        currentSession?.cancel()
+        currentSession = nil
+    }
+
+    /// Cancel any in-flight `ASWebAuthenticationSession`. Mirrors
+    /// `resetCurrentSession()` for the browser-only flow.
+    private func resetCurrentBrowserSession() {
+        currentBrowserSession?.cancel()
+        currentBrowserSession = nil
+        currentBrowserPresentationContext = nil
+    }
+
+    /// Best-effort source for the AppAuth presentation view controller.
     ///
     /// The Tauri `PluginManager` populates `viewController` when the webview is
     /// created; in the rare case that the anchor is unavailable (background
@@ -532,12 +633,26 @@ class AppAuthPlugin: Plugin {
         if let viewController = manager.viewController {
             return viewController
         }
+        return foregroundKeyWindow()?.rootViewController
+    }
+
+    /// Best-effort source for the `ASWebAuthenticationSession` presentation
+    /// anchor. Returns `nil` rather than a placeholder `ASPresentationAnchor`,
+    /// since `ASWebAuthenticationSession`'s behavior with an unattached window
+    /// is undefined.
+    private func resolvePresentationAnchor() -> ASPresentationAnchor? {
+        if let window = manager.viewController?.view.window {
+            return window
+        }
+        return foregroundKeyWindow()
+    }
+
+    private func foregroundKeyWindow() -> UIWindow? {
         return UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .filter { $0.activationState == .foregroundActive }
             .flatMap { $0.windows }
-            .first(where: { $0.isKeyWindow })?
-            .rootViewController
+            .first(where: { $0.isKeyWindow })
     }
 
     private func emit(_ event: AuthEvent) {
@@ -546,7 +661,12 @@ class AppAuthPlugin: Plugin {
             try channel.send(event)
         } catch {
             // Diagnostic events are best-effort; never let serialization
-            // failures break the underlying flow.
+            // failures break the underlying flow. Surface them in DEBUG so
+            // problems are visible during development without leaking to
+            // production logs.
+            #if DEBUG
+            print("AppAuthPlugin: event emission failed for \(event.rawValue): \(error)")
+            #endif
         }
     }
 }
@@ -570,29 +690,19 @@ enum AuthEvent: String, Encodable {
 
 // MARK: - ASWebAuthenticationSession presentation anchor (iOS 13+)
 
-/// Standalone object so we don't have to make `AppAuthPlugin` an
-/// `NSObject`-ASWebAuthenticationPresentationContextProviding hybrid; AppAuth
-/// already pulls us into Objective-C territory and stacking another protocol
-/// gets noisy.
+/// Owns the `ASPresentationAnchor` for a single `ASWebAuthenticationSession`.
+/// Built per session so we never fall back to a placeholder anchor — the plugin
+/// rejects up front when no real anchor can be resolved.
 private final class BrowserPresentationContext: NSObject, ASWebAuthenticationPresentationContextProviding {
-    private let resolveAnchor: () -> UIViewController?
+    private let anchor: ASPresentationAnchor
 
-    init(resolveAnchor: @escaping () -> UIViewController?) {
-        self.resolveAnchor = resolveAnchor
+    init(anchor: ASPresentationAnchor) {
+        self.anchor = anchor
+        super.init()
     }
 
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        if let window = resolveAnchor()?.view.window {
-            return window
-        }
-        if let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive }),
-           let window = scene.windows.first(where: { $0.isKeyWindow })
-        {
-            return window
-        }
-        return ASPresentationAnchor()
+        return anchor
     }
 }
 

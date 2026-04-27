@@ -69,7 +69,7 @@ fn authorize_returns_unsupported() {
         login_hint: None,
         ui_locales: None,
         prefers_ephemeral_session: true,
-        use_nonce: None,
+        use_nonce: true,
     }));
     assert_unsupported(res);
 }
